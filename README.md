@@ -25,8 +25,8 @@ gh pr-screenshot 123 ./screenshots/*.png
 # Auto-detect PR from current branch
 gh pr-screenshot screenshot.png
 
-# Add a label
-gh pr-screenshot 123 --title "After fix" screenshot.png
+# Add a label (flags must come before PR number)
+gh pr-screenshot --title "After fix" 123 screenshot.png
 ```
 
 ## How it works

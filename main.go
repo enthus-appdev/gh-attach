@@ -121,19 +121,3 @@ func expandFiles(patterns []string) ([]string, error) {
 	}
 	return files, nil
 }
-
-// --- Stubs: replaced by later tasks ---
-
-// CommentClient interacts with the GitHub Issues API for PR comments.
-type CommentClient struct {
-	BaseURL string
-	Token   string
-}
-
-func NewCommentClient() (*CommentClient, error) {
-	return nil, fmt.Errorf("not implemented")
-}
-
-func (c *CommentClient) UpsertComment(repo *Repo, prNumber int, paths []ScreenshotPath, title string) (string, error) {
-	return "", fmt.Errorf("not implemented")
-}

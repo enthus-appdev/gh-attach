@@ -124,20 +124,6 @@ func expandFiles(patterns []string) ([]string, error) {
 
 // --- Stubs: replaced by later tasks ---
 
-// Repo identifies a GitHub repository.
-type Repo struct {
-	Owner string
-	Name  string
-}
-
-func resolveRepo() (*Repo, error) {
-	return nil, fmt.Errorf("not implemented")
-}
-
-func resolvePR(repo *Repo) (int, error) {
-	return 0, fmt.Errorf("not implemented")
-}
-
 // ScreenshotPath holds the branch-relative path and display name for an uploaded screenshot.
 type ScreenshotPath struct {
 	BranchPath string // e.g. "pr-123/20260401-120000-screenshot.png"

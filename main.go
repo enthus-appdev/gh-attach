@@ -124,26 +124,6 @@ func expandFiles(patterns []string) ([]string, error) {
 
 // --- Stubs: replaced by later tasks ---
 
-// ScreenshotPath holds the branch-relative path and display name for an uploaded screenshot.
-type ScreenshotPath struct {
-	BranchPath string // e.g. "pr-123/20260401-120000-screenshot.png"
-	FileName   string // e.g. "screenshot.png"
-}
-
-// GitDataClient interacts with the GitHub Git Data API.
-type GitDataClient struct {
-	BaseURL string
-	Token   string
-}
-
-func NewGitDataClient() (*GitDataClient, error) {
-	return nil, fmt.Errorf("not implemented")
-}
-
-func (c *GitDataClient) PushScreenshots(repo *Repo, prNumber int, files []string) ([]ScreenshotPath, error) {
-	return nil, fmt.Errorf("not implemented")
-}
-
 // CommentClient interacts with the GitHub Issues API for PR comments.
 type CommentClient struct {
 	BaseURL string

@@ -46,7 +46,7 @@ func formatComment(repo *Repo, paths []ScreenshotPath, title string) string {
 	}
 	var images []imageEntry
 	for _, p := range paths {
-		url := fmt.Sprintf("https://github.com/%s/%s/blob/_screenshots/%s?raw=true", repo.Owner, repo.Name, p.BranchPath)
+		url := fmt.Sprintf("https://github.com/%s/%s/blob/claude/_screenshots/%s?raw=true", repo.Owner, repo.Name, p.BranchPath)
 		images = append(images, imageEntry{name: p.FileName, url: url})
 	}
 
@@ -100,7 +100,7 @@ func formatSection(repo *Repo, paths []ScreenshotPath, title string) string {
 	}
 	var images []imageEntry
 	for _, p := range paths {
-		url := fmt.Sprintf("https://github.com/%s/%s/blob/_screenshots/%s?raw=true", repo.Owner, repo.Name, p.BranchPath)
+		url := fmt.Sprintf("https://github.com/%s/%s/blob/claude/_screenshots/%s?raw=true", repo.Owner, repo.Name, p.BranchPath)
 		images = append(images, imageEntry{name: p.FileName, url: url})
 	}
 

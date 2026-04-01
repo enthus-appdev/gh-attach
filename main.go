@@ -70,7 +70,7 @@ func run(prNumber int, filePaths []string, title string) error {
 
 	fmt.Fprintf(os.Stderr, "Uploading %d file(s) to PR #%d in %s/%s...\n", len(files), prNumber, repo.Owner, repo.Name)
 
-	// Push images to _screenshots branch via Git Data API
+	// Push images to claude/_screenshots branch via Git Data API
 	client, err := NewGitDataClient()
 	if err != nil {
 		return fmt.Errorf("create git client: %w", err)

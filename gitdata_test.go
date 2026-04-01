@@ -14,7 +14,7 @@ func TestPushScreenshotsCreatesBlob(t *testing.T) {
 
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("GET /repos/owner/repo/git/ref/heads/_screenshots", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /repos/owner/repo/git/ref/heads/claude/_screenshots", func(w http.ResponseWriter, r *http.Request) {
 		calls = append(calls, "GET ref")
 		w.WriteHeader(http.StatusNotFound)
 	})
@@ -37,7 +37,7 @@ func TestPushScreenshotsCreatesBlob(t *testing.T) {
 	mux.HandleFunc("POST /repos/owner/repo/git/refs", func(w http.ResponseWriter, r *http.Request) {
 		calls = append(calls, "POST ref")
 		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(map[string]string{"ref": "refs/heads/_screenshots"})
+		json.NewEncoder(w).Encode(map[string]string{"ref": "refs/heads/claude/_screenshots"})
 	})
 
 	srv := httptest.NewServer(mux)
@@ -78,7 +78,7 @@ func TestPushScreenshotsAppendsToExistingBranch(t *testing.T) {
 
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("GET /repos/owner/repo/git/ref/heads/_screenshots", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /repos/owner/repo/git/ref/heads/claude/_screenshots", func(w http.ResponseWriter, r *http.Request) {
 		calls = append(calls, "GET ref")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"object": map[string]string{"sha": "existing-commit-sha"},
@@ -112,9 +112,9 @@ func TestPushScreenshotsAppendsToExistingBranch(t *testing.T) {
 		json.NewEncoder(w).Encode(map[string]string{"sha": "new-commit-sha"})
 	})
 
-	mux.HandleFunc("PATCH /repos/owner/repo/git/refs/heads/_screenshots", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("PATCH /repos/owner/repo/git/refs/heads/claude/_screenshots", func(w http.ResponseWriter, r *http.Request) {
 		calls = append(calls, "PATCH ref")
-		json.NewEncoder(w).Encode(map[string]string{"ref": "refs/heads/_screenshots"})
+		json.NewEncoder(w).Encode(map[string]string{"ref": "refs/heads/claude/_screenshots"})
 	})
 
 	srv := httptest.NewServer(mux)

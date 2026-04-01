@@ -2,7 +2,7 @@
 
 A [gh](https://cli.github.com/) extension for uploading screenshots to GitHub PRs.
 
-Images are pushed to an auth-protected `_screenshots` branch and linked inline in a PR comment. No public URLs, no gists — image access is gated by repo visibility.
+Images are pushed to an auth-protected `claude/_screenshots` branch and linked inline in a PR comment. No public URLs, no gists — image access is gated by repo visibility.
 
 ## Install
 
@@ -32,7 +32,7 @@ gh pr-screenshot 123 --title "After fix" screenshot.png
 ## How it works
 
 1. Reads image files from disk
-2. Pushes them to an orphan `_screenshots` branch via the GitHub Git Data API (no local checkout needed)
+2. Pushes them to an orphan `claude/_screenshots` branch via the GitHub Git Data API (no local checkout needed)
 3. Posts or updates a PR comment with inline images using `blob?raw=true` URLs
 4. Images are accessible only to users who can access the repo
 

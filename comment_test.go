@@ -22,7 +22,7 @@ func TestFormatComment(t *testing.T) {
 		if !strings.Contains(body, "**After fix**") {
 			t.Error("missing title")
 		}
-		if !strings.Contains(body, "blob/_screenshots/pr-123/20260401-120000-screenshot.png?raw=true") {
+		if !strings.Contains(body, "blob/claude/_screenshots/pr-123/20260401-120000-screenshot.png?raw=true") {
 			t.Error("missing image URL")
 		}
 	})

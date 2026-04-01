@@ -38,12 +38,12 @@ func NewGitDataClient() (*GitDataClient, error) {
 	}, nil
 }
 
-// PushScreenshots uploads files to the _screenshots branch via the Git Data API.
+// PushScreenshots uploads files to the claude/_screenshots branch via the Git Data API.
 func (c *GitDataClient) PushScreenshots(repo *Repo, prNumber int, files []string) ([]ScreenshotPath, error) {
 	prefix := fmt.Sprintf("repos/%s/%s", repo.Owner, repo.Name)
 	timestamp := time.Now().UTC().Format("20060102-150405")
 
-	// 1. Check if _screenshots branch exists
+	// 1. Check if claude/_screenshots branch exists
 	parentCommitSHA := ""
 	baseTreeSHA := ""
 
@@ -52,7 +52,7 @@ func (c *GitDataClient) PushScreenshots(repo *Repo, prNumber int, files []string
 			SHA string `json:"sha"`
 		} `json:"object"`
 	}
-	err := c.get(fmt.Sprintf("%s/git/ref/heads/_screenshots", prefix), &refResp)
+	err := c.get(fmt.Sprintf("%s/git/ref/heads/claude/_screenshots", prefix), &refResp)
 	if err == nil {
 		parentCommitSHA = refResp.Object.SHA
 
@@ -145,12 +145,12 @@ func (c *GitDataClient) PushScreenshots(repo *Repo, prNumber int, files []string
 			"sha":   commitResp.SHA,
 			"force": false,
 		}
-		if err := c.patch(fmt.Sprintf("%s/git/refs/heads/_screenshots", prefix), refReq); err != nil {
+		if err := c.patch(fmt.Sprintf("%s/git/refs/heads/claude/_screenshots", prefix), refReq); err != nil {
 			return nil, fmt.Errorf("update ref: %w", err)
 		}
 	} else {
 		refReq := map[string]string{
-			"ref": "refs/heads/_screenshots",
+			"ref": "refs/heads/claude/_screenshots",
 			"sha": commitResp.SHA,
 		}
 		if err := c.postNoResponse(fmt.Sprintf("%s/git/refs", prefix), refReq); err != nil {

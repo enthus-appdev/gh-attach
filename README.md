@@ -38,26 +38,8 @@ gh pr-screenshot --title "After fix" 123 screenshot.png
 
 ## Cleanup
 
-Add a cleanup workflow to your repo to automatically remove screenshots when PRs are closed:
+To automatically remove uploaded screenshots when a PR or issue is closed, copy [`.github/workflows/cleanup-pr-screenshots.yml`](.github/workflows/cleanup-pr-screenshots.yml) from this repo into your repo's `.github/workflows/` directory. The same file is installed in this repo as the canonical source, so any update flows automatically to anyone who copies from `main`.
 
-```yaml
-# .github/workflows/cleanup-pr-screenshots.yml
-name: Cleanup PR screenshots
-on:
-  pull_request:
-    types: [closed]
-permissions:
-  contents: write
-jobs:
-  cleanup:
-    runs-on: ubuntu-latest
-    steps:
-      - env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh api -X DELETE \
-            "repos/${{ github.repository }}/git/refs/uploads/issues/${{ github.event.number }}" \
-            || echo "no upload ref"
-```
+No customization required — the workflow uses `github.repository` and the closed event's number to find and delete the upload ref. It listens to both `pull_request: closed` and `issues: closed`, so it covers future issue-comment uploads as well as the current PR-comment use case. The "no upload ref for this PR" case is handled silently (no error if you didn't post any screenshots on that PR).
 
 Deleting the ref makes the orphan commits unreachable, and GitHub eventually GCs the blob storage.

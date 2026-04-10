@@ -25,7 +25,7 @@ gh attach 123 ./images/*.png
 # Auto-detect PR from current branch
 gh attach screenshot.png
 
-# Add a label (flags must come before PR number)
+# Add a label (flags must come before the number)
 gh attach --title "After fix" 123 diagram.png
 ```
 

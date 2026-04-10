@@ -56,7 +56,7 @@ func resolveRepo() (*Repo, error) {
 func resolvePR(repo *Repo) (int, error) {
 	out, err := exec.Command("gh", "pr", "view", "--json", "number", "--repo", repo.Owner+"/"+repo.Name).Output()
 	if err != nil {
-		return 0, fmt.Errorf("no PR found for current branch (use explicit PR number): %w", err)
+		return 0, fmt.Errorf("no PR found for current branch (pass an explicit PR or issue number): %w", err)
 	}
 	var result struct {
 		Number int `json:"number"`

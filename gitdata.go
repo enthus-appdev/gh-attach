@@ -11,13 +11,13 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"time"
 )
 
-// ScreenshotPath holds the branch-relative path and display name for an uploaded screenshot.
+// ScreenshotPath holds the tree-relative path of an uploaded screenshot.
+// Stored under refs/uploads/issues/<N>, the tree contains files at top level
+// keyed by basename, so Path doubles as both the tree path and the display name.
 type ScreenshotPath struct {
-	BranchPath string // e.g. "pr-123/20260401-120000-screenshot.png"
-	FileName   string // e.g. "screenshot.png"
+	Path string // e.g. "screenshot.png"
 }
 
 // GitDataClient interacts with the GitHub Git Data API.
@@ -38,12 +38,27 @@ func NewGitDataClient() (*GitDataClient, error) {
 	}, nil
 }
 
-// PushScreenshots uploads files to the claude/_screenshots branch via the Git Data API.
-func (c *GitDataClient) PushScreenshots(repo *Repo, prNumber int, files []string) ([]ScreenshotPath, error) {
+// PushScreenshots uploads files via the Git Data API to refs/uploads/issues/<N>,
+// a custom-namespace ref that bypasses branch protection / rulesets and is invisible
+// in the Branches UI. Returns the per-upload basenames and the commit SHA they're
+// reachable from. Embed URLs reference the commit SHA directly so they remain valid
+// across subsequent uploads as long as the ref is not deleted.
+func (c *GitDataClient) PushScreenshots(repo *Repo, prNumber int, files []string) ([]ScreenshotPath, string, error) {
 	prefix := fmt.Sprintf("repos/%s/%s", repo.Owner, repo.Name)
-	timestamp := time.Now().UTC().Format("20060102-150405")
+	refSuffix := fmt.Sprintf("uploads/issues/%d", prNumber) // path under refs/
 
-	// 1. Check if claude/_screenshots branch exists
+	// 0. Reject basename collisions before any API calls. Tree paths are basenames,
+	// so two source files with the same basename would silently overwrite each other.
+	seenBasename := make(map[string]string, len(files))
+	for _, f := range files {
+		base := filepath.Base(f)
+		if other, exists := seenBasename[base]; exists {
+			return nil, "", fmt.Errorf("duplicate basename %q: %s and %s would collide in the same upload — rename one of the files", base, other, f)
+		}
+		seenBasename[base] = f
+	}
+
+	// 1. Check if our upload ref already exists for this PR/issue
 	parentCommitSHA := ""
 	baseTreeSHA := ""
 
@@ -52,7 +67,7 @@ func (c *GitDataClient) PushScreenshots(repo *Repo, prNumber int, files []string
 			SHA string `json:"sha"`
 		} `json:"object"`
 	}
-	err := c.get(fmt.Sprintf("%s/git/ref/heads/claude/_screenshots", prefix), &refResp)
+	err := c.get(fmt.Sprintf("%s/git/ref/%s", prefix, refSuffix), &refResp)
 	if err == nil {
 		parentCommitSHA = refResp.Object.SHA
 
@@ -62,7 +77,7 @@ func (c *GitDataClient) PushScreenshots(repo *Repo, prNumber int, files []string
 			} `json:"tree"`
 		}
 		if err := c.get(fmt.Sprintf("%s/git/commits/%s", prefix, parentCommitSHA), &commitResp); err != nil {
-			return nil, fmt.Errorf("get commit: %w", err)
+			return nil, "", fmt.Errorf("get commit: %w", err)
 		}
 		baseTreeSHA = commitResp.Tree.SHA
 	}
@@ -80,7 +95,7 @@ func (c *GitDataClient) PushScreenshots(repo *Repo, prNumber int, files []string
 	for _, f := range files {
 		data, err := os.ReadFile(f)
 		if err != nil {
-			return nil, fmt.Errorf("read %s: %w", f, err)
+			return nil, "", fmt.Errorf("read %s: %w", f, err)
 		}
 
 		blobReq := map[string]string{
@@ -91,24 +106,20 @@ func (c *GitDataClient) PushScreenshots(repo *Repo, prNumber int, files []string
 			SHA string `json:"sha"`
 		}
 		if err := c.post(fmt.Sprintf("%s/git/blobs", prefix), blobReq, &blobResp); err != nil {
-			return nil, fmt.Errorf("create blob for %s: %w", f, err)
+			return nil, "", fmt.Errorf("create blob for %s: %w", f, err)
 		}
 
 		fileName := filepath.Base(f)
-		branchPath := fmt.Sprintf("pr-%d/%s-%s", prNumber, timestamp, fileName)
 		entries = append(entries, treeEntry{
-			Path: branchPath,
+			Path: fileName,
 			Mode: "100644",
 			Type: "blob",
 			SHA:  blobResp.SHA,
 		})
-		paths = append(paths, ScreenshotPath{
-			BranchPath: branchPath,
-			FileName:   fileName,
-		})
+		paths = append(paths, ScreenshotPath{Path: fileName})
 	}
 
-	// 3. Create tree
+	// 3. Create tree (fast-forward by basing on the previous tree if it exists)
 	treeReq := map[string]interface{}{
 		"tree": entries,
 	}
@@ -119,12 +130,12 @@ func (c *GitDataClient) PushScreenshots(repo *Repo, prNumber int, files []string
 		SHA string `json:"sha"`
 	}
 	if err := c.post(fmt.Sprintf("%s/git/trees", prefix), treeReq, &treeResp); err != nil {
-		return nil, fmt.Errorf("create tree: %w", err)
+		return nil, "", fmt.Errorf("create tree: %w", err)
 	}
 
-	// 4. Create commit
+	// 4. Create commit (fast-forward chain so older blobs stay reachable)
 	commitReq := map[string]interface{}{
-		"message": fmt.Sprintf("screenshots for PR #%d", prNumber),
+		"message": fmt.Sprintf("screenshots for #%d", prNumber),
 		"tree":    treeResp.SHA,
 	}
 	if parentCommitSHA != "" {
@@ -136,29 +147,29 @@ func (c *GitDataClient) PushScreenshots(repo *Repo, prNumber int, files []string
 		SHA string `json:"sha"`
 	}
 	if err := c.post(fmt.Sprintf("%s/git/commits", prefix), commitReq, &commitResp); err != nil {
-		return nil, fmt.Errorf("create commit: %w", err)
+		return nil, "", fmt.Errorf("create commit: %w", err)
 	}
 
-	// 5. Create or update ref
+	// 5. Create or fast-forward the ref
 	if parentCommitSHA != "" {
 		refReq := map[string]interface{}{
 			"sha":   commitResp.SHA,
 			"force": false,
 		}
-		if err := c.patch(fmt.Sprintf("%s/git/refs/heads/claude/_screenshots", prefix), refReq); err != nil {
-			return nil, fmt.Errorf("update ref: %w", err)
+		if err := c.patch(fmt.Sprintf("%s/git/refs/%s", prefix, refSuffix), refReq); err != nil {
+			return nil, "", fmt.Errorf("update ref: %w", err)
 		}
 	} else {
 		refReq := map[string]string{
-			"ref": "refs/heads/claude/_screenshots",
+			"ref": fmt.Sprintf("refs/%s", refSuffix),
 			"sha": commitResp.SHA,
 		}
 		if err := c.postNoResponse(fmt.Sprintf("%s/git/refs", prefix), refReq); err != nil {
-			return nil, fmt.Errorf("create ref: %w", err)
+			return nil, "", fmt.Errorf("create ref: %w", err)
 		}
 	}
 
-	return paths, nil
+	return paths, commitResp.SHA, nil
 }
 
 func (c *GitDataClient) get(path string, result interface{}) error {

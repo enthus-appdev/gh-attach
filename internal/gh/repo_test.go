@@ -36,6 +36,11 @@ func TestParseRepoFromRemote(t *testing.T) {
 			remote:  "not-a-url",
 			wantErr: true,
 		},
+		{
+			name:    "SSH URL without colon",
+			remote:  "git@nocolonhere",
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {

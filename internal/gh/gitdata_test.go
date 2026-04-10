@@ -258,3 +258,321 @@ func TestPushAttachmentsRejectsBasenameCollision(t *testing.T) {
 		t.Errorf("error = %q, want it to mention the colliding basename", err.Error())
 	}
 }
+
+// ---------------------------------------------------------------------
+// NewGitDataClient — uses stubbed execCommand to avoid touching gh CLI.
+// ---------------------------------------------------------------------
+
+func TestNewGitDataClient(t *testing.T) {
+	t.Run("happy path", func(t *testing.T) {
+		withStubExec(t, stubOutput("gho_token"))
+		client, err := NewGitDataClient()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if client.Token != "gho_token" {
+			t.Errorf("token = %q, want gho_token", client.Token)
+		}
+		if client.BaseURL != "https://api.github.com" {
+			t.Errorf("baseURL = %q, want https://api.github.com", client.BaseURL)
+		}
+	})
+
+	t.Run("gh auth token fails", func(t *testing.T) {
+		withStubExec(t, stubFail())
+		_, err := NewGitDataClient()
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+	})
+}
+
+// ---------------------------------------------------------------------
+// HTTP helper error paths (get/post/postNoResponse/patch return non-2xx
+// or network failures).
+// ---------------------------------------------------------------------
+
+func TestGitDataClientHTTPErrorPaths(t *testing.T) {
+	t.Run("get returns 500", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "boom", http.StatusInternalServerError)
+		}))
+		defer srv.Close()
+		c := &GitDataClient{BaseURL: srv.URL, Token: "t"}
+		var result struct{}
+		err := c.get("some/path", &result)
+		if err == nil || !strings.Contains(err.Error(), "500") {
+			t.Errorf("err = %v, want 500", err)
+		}
+	})
+
+	t.Run("get network failure", func(t *testing.T) {
+		// Port 1 is privileged and unused — Do() will fail.
+		c := &GitDataClient{BaseURL: "http://127.0.0.1:1", Token: "t"}
+		var result struct{}
+		if err := c.get("x", &result); err == nil {
+			t.Fatal("expected network error")
+		}
+	})
+
+	t.Run("post returns 500", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "nope", http.StatusInternalServerError)
+		}))
+		defer srv.Close()
+		c := &GitDataClient{BaseURL: srv.URL, Token: "t"}
+		var result struct{}
+		err := c.post("x", map[string]string{}, &result)
+		if err == nil || !strings.Contains(err.Error(), "500") {
+			t.Errorf("err = %v, want 500", err)
+		}
+	})
+
+	t.Run("post network failure", func(t *testing.T) {
+		c := &GitDataClient{BaseURL: "http://127.0.0.1:1", Token: "t"}
+		var result struct{}
+		if err := c.post("x", map[string]string{}, &result); err == nil {
+			t.Fatal("expected network error")
+		}
+	})
+
+	t.Run("postNoResponse returns 500", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "nope", http.StatusInternalServerError)
+		}))
+		defer srv.Close()
+		c := &GitDataClient{BaseURL: srv.URL, Token: "t"}
+		err := c.postNoResponse("x", map[string]string{})
+		if err == nil || !strings.Contains(err.Error(), "500") {
+			t.Errorf("err = %v, want 500", err)
+		}
+	})
+
+	t.Run("postNoResponse network failure", func(t *testing.T) {
+		c := &GitDataClient{BaseURL: "http://127.0.0.1:1", Token: "t"}
+		if err := c.postNoResponse("x", map[string]string{}); err == nil {
+			t.Fatal("expected network error")
+		}
+	})
+
+	t.Run("patch returns 500", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "nope", http.StatusInternalServerError)
+		}))
+		defer srv.Close()
+		c := &GitDataClient{BaseURL: srv.URL, Token: "t"}
+		err := c.patch("x", map[string]string{})
+		if err == nil || !strings.Contains(err.Error(), "500") {
+			t.Errorf("err = %v, want 500", err)
+		}
+	})
+
+	t.Run("patch network failure", func(t *testing.T) {
+		c := &GitDataClient{BaseURL: "http://127.0.0.1:1", Token: "t"}
+		if err := c.patch("x", map[string]string{}); err == nil {
+			t.Fatal("expected network error")
+		}
+	})
+
+	t.Run("get decode error on invalid JSON body", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte("not valid json"))
+		}))
+		defer srv.Close()
+		c := &GitDataClient{BaseURL: srv.URL, Token: "t"}
+		var result struct {
+			SHA string `json:"sha"`
+		}
+		if err := c.get("x", &result); err == nil {
+			t.Fatal("expected decode error")
+		}
+	})
+
+	t.Run("post decode error on invalid JSON body", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte("not valid json"))
+		}))
+		defer srv.Close()
+		c := &GitDataClient{BaseURL: srv.URL, Token: "t"}
+		var result struct {
+			SHA string `json:"sha"`
+		}
+		if err := c.post("x", map[string]string{}, &result); err == nil {
+			t.Fatal("expected decode error")
+		}
+	})
+
+	t.Run("get 404 short-circuit", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNotFound)
+		}))
+		defer srv.Close()
+		c := &GitDataClient{BaseURL: srv.URL, Token: "t"}
+		var result struct{}
+		err := c.get("x", &result)
+		if err == nil || !strings.Contains(err.Error(), "not found") {
+			t.Errorf("err = %v, want 'not found'", err)
+		}
+	})
+}
+
+// ---------------------------------------------------------------------
+// PushAttachments error paths at each API step.
+// ---------------------------------------------------------------------
+
+func TestPushAttachmentsErrorPaths(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "f.png")
+	if err := os.WriteFile(testFile, []byte("data"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	repo := &Repo{Owner: "owner", Name: "repo"}
+
+	t.Run("get commit on existing ref fails", func(t *testing.T) {
+		mux := http.NewServeMux()
+		mux.HandleFunc("GET /repos/owner/repo/git/ref/uploads/issues/1", func(w http.ResponseWriter, r *http.Request) {
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"object": map[string]string{"sha": "existing-sha"},
+			})
+		})
+		mux.HandleFunc("GET /repos/owner/repo/git/commits/existing-sha", func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "gone", http.StatusInternalServerError)
+		})
+		srv := httptest.NewServer(mux)
+		defer srv.Close()
+		c := &GitDataClient{BaseURL: srv.URL, Token: "t"}
+		_, _, err := c.PushAttachments(repo, "uploads/issues/1", "msg", []string{testFile})
+		if err == nil || !strings.Contains(err.Error(), "get commit") {
+			t.Errorf("err = %v, want 'get commit'", err)
+		}
+	})
+
+	t.Run("create blob fails", func(t *testing.T) {
+		mux := http.NewServeMux()
+		mux.HandleFunc("GET /repos/owner/repo/git/ref/uploads/issues/2", func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNotFound)
+		})
+		mux.HandleFunc("POST /repos/owner/repo/git/blobs", func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "nope", http.StatusForbidden)
+		})
+		srv := httptest.NewServer(mux)
+		defer srv.Close()
+		c := &GitDataClient{BaseURL: srv.URL, Token: "t"}
+		_, _, err := c.PushAttachments(repo, "uploads/issues/2", "msg", []string{testFile})
+		if err == nil || !strings.Contains(err.Error(), "create blob") {
+			t.Errorf("err = %v, want 'create blob'", err)
+		}
+	})
+
+	t.Run("create tree fails", func(t *testing.T) {
+		mux := http.NewServeMux()
+		mux.HandleFunc("GET /repos/owner/repo/git/ref/uploads/issues/3", func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNotFound)
+		})
+		mux.HandleFunc("POST /repos/owner/repo/git/blobs", func(w http.ResponseWriter, r *http.Request) {
+			_ = json.NewEncoder(w).Encode(map[string]string{"sha": "blob-sha"})
+		})
+		mux.HandleFunc("POST /repos/owner/repo/git/trees", func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "bad tree", http.StatusBadRequest)
+		})
+		srv := httptest.NewServer(mux)
+		defer srv.Close()
+		c := &GitDataClient{BaseURL: srv.URL, Token: "t"}
+		_, _, err := c.PushAttachments(repo, "uploads/issues/3", "msg", []string{testFile})
+		if err == nil || !strings.Contains(err.Error(), "create tree") {
+			t.Errorf("err = %v, want 'create tree'", err)
+		}
+	})
+
+	t.Run("create commit fails", func(t *testing.T) {
+		mux := http.NewServeMux()
+		mux.HandleFunc("GET /repos/owner/repo/git/ref/uploads/issues/4", func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNotFound)
+		})
+		mux.HandleFunc("POST /repos/owner/repo/git/blobs", func(w http.ResponseWriter, r *http.Request) {
+			_ = json.NewEncoder(w).Encode(map[string]string{"sha": "b"})
+		})
+		mux.HandleFunc("POST /repos/owner/repo/git/trees", func(w http.ResponseWriter, r *http.Request) {
+			_ = json.NewEncoder(w).Encode(map[string]string{"sha": "t"})
+		})
+		mux.HandleFunc("POST /repos/owner/repo/git/commits", func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "bad commit", http.StatusBadRequest)
+		})
+		srv := httptest.NewServer(mux)
+		defer srv.Close()
+		c := &GitDataClient{BaseURL: srv.URL, Token: "t"}
+		_, _, err := c.PushAttachments(repo, "uploads/issues/4", "msg", []string{testFile})
+		if err == nil || !strings.Contains(err.Error(), "create commit") {
+			t.Errorf("err = %v, want 'create commit'", err)
+		}
+	})
+
+	t.Run("create ref fails", func(t *testing.T) {
+		mux := http.NewServeMux()
+		mux.HandleFunc("GET /repos/owner/repo/git/ref/uploads/issues/5", func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNotFound)
+		})
+		mux.HandleFunc("POST /repos/owner/repo/git/blobs", func(w http.ResponseWriter, r *http.Request) {
+			_ = json.NewEncoder(w).Encode(map[string]string{"sha": "b"})
+		})
+		mux.HandleFunc("POST /repos/owner/repo/git/trees", func(w http.ResponseWriter, r *http.Request) {
+			_ = json.NewEncoder(w).Encode(map[string]string{"sha": "t"})
+		})
+		mux.HandleFunc("POST /repos/owner/repo/git/commits", func(w http.ResponseWriter, r *http.Request) {
+			_ = json.NewEncoder(w).Encode(map[string]string{"sha": "c"})
+		})
+		mux.HandleFunc("POST /repos/owner/repo/git/refs", func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "ruleset", http.StatusUnprocessableEntity)
+		})
+		srv := httptest.NewServer(mux)
+		defer srv.Close()
+		c := &GitDataClient{BaseURL: srv.URL, Token: "t"}
+		_, _, err := c.PushAttachments(repo, "uploads/issues/5", "msg", []string{testFile})
+		if err == nil || !strings.Contains(err.Error(), "create ref") {
+			t.Errorf("err = %v, want 'create ref'", err)
+		}
+	})
+
+	t.Run("update ref fails when ref already exists", func(t *testing.T) {
+		mux := http.NewServeMux()
+		mux.HandleFunc("GET /repos/owner/repo/git/ref/uploads/issues/6", func(w http.ResponseWriter, r *http.Request) {
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"object": map[string]string{"sha": "existing-sha"},
+			})
+		})
+		mux.HandleFunc("GET /repos/owner/repo/git/commits/existing-sha", func(w http.ResponseWriter, r *http.Request) {
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"tree": map[string]string{"sha": "existing-tree"},
+			})
+		})
+		mux.HandleFunc("POST /repos/owner/repo/git/blobs", func(w http.ResponseWriter, r *http.Request) {
+			_ = json.NewEncoder(w).Encode(map[string]string{"sha": "b"})
+		})
+		mux.HandleFunc("POST /repos/owner/repo/git/trees", func(w http.ResponseWriter, r *http.Request) {
+			_ = json.NewEncoder(w).Encode(map[string]string{"sha": "t"})
+		})
+		mux.HandleFunc("POST /repos/owner/repo/git/commits", func(w http.ResponseWriter, r *http.Request) {
+			_ = json.NewEncoder(w).Encode(map[string]string{"sha": "c"})
+		})
+		mux.HandleFunc("PATCH /repos/owner/repo/git/refs/uploads/issues/6", func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "not ff", http.StatusUnprocessableEntity)
+		})
+		srv := httptest.NewServer(mux)
+		defer srv.Close()
+		c := &GitDataClient{BaseURL: srv.URL, Token: "t"}
+		_, _, err := c.PushAttachments(repo, "uploads/issues/6", "msg", []string{testFile})
+		if err == nil || !strings.Contains(err.Error(), "update ref") {
+			t.Errorf("err = %v, want 'update ref'", err)
+		}
+	})
+
+	t.Run("read file fails", func(t *testing.T) {
+		c := &GitDataClient{BaseURL: "http://127.0.0.1:1", Token: "t"}
+		// Non-existent file — os.ReadFile errors with "no such file".
+		_, _, err := c.PushAttachments(repo, "uploads/issues/7", "msg", []string{"/tmp/does-not-exist-gh-attach-test.png"})
+		if err == nil || !strings.Contains(err.Error(), "read") {
+			t.Errorf("err = %v, want 'read' error", err)
+		}
+	})
+}
+

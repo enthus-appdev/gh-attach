@@ -1,7 +1,7 @@
 # gh-attach
 
 [![Go](https://github.com/enthus-appdev/gh-attach/actions/workflows/go.yml/badge.svg)](https://github.com/enthus-appdev/gh-attach/actions/workflows/go.yml)
-[![Coverage](https://github.com/enthus-appdev/gh-attach/blob/badges/.badges/main/coverage.svg)](https://github.com/enthus-appdev/gh-attach/actions/workflows/go.yml)
+[![Coverage](https://github.com/enthus-appdev/gh-attach/raw/badges/.badges/main/coverage.svg)](https://github.com/enthus-appdev/gh-attach/actions/workflows/go.yml)
 
 A [gh](https://cli.github.com/) extension for uploading images to GitHub PRs and issues, privately scoped to repo visibility.
 

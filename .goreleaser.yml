@@ -10,8 +10,12 @@ builds:
       - arm64
 
 archives:
-  - formats: ['tar.gz']
-    name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
+  # Raw binary format with {os}-{arch} naming is what `gh extension install`
+  # looks for. Any other format (tar.gz, zip) or separator (_) causes gh to
+  # reject the release with "no usable release artifact or script found".
+  # See drogers0/gh-image for the canonical working template.
+  - formats: ['binary']
+    name_template: "{{ .Os }}-{{ .Arch }}"
 
 changelog:
   sort: asc

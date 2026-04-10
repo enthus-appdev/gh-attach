@@ -2,6 +2,7 @@ version: 2
 
 builds:
   - binary: gh-attach
+    main: ./cmd/gh-attach
     goos:
       - darwin
       - linux

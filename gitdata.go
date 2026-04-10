@@ -14,7 +14,7 @@ import (
 )
 
 // AttachmentPath holds the tree-relative path of an uploaded attachment.
-// Stored under refs/uploads/issues/<N>, the tree contains files at top level
+// Stored under refs/uploads/<refPath>, the tree contains files at top level
 // keyed by basename, so Path doubles as both the tree path and the display name.
 type AttachmentPath struct {
 	Path string // e.g. "screenshot.png"
@@ -38,14 +38,16 @@ func NewGitDataClient() (*GitDataClient, error) {
 	}, nil
 }
 
-// PushAttachments uploads files via the Git Data API to refs/uploads/issues/<N>,
-// a custom-namespace ref that bypasses branch protection / rulesets and is invisible
-// in the Branches UI. Returns the per-upload basenames and the commit SHA they're
-// reachable from. Embed URLs reference the commit SHA directly so they remain valid
-// across subsequent uploads as long as the ref is not deleted.
-func (c *GitDataClient) PushAttachments(repo *Repo, prNumber int, files []string) ([]AttachmentPath, string, error) {
+// PushAttachments uploads files via the Git Data API to the ref at
+// refs/<refPath>, a custom-namespace ref that bypasses branch protection /
+// rulesets and is invisible in the Branches UI. Typical refPath values are
+// "uploads/issues/<N>" for PR/issue uploads or "uploads/misc/<key>" for
+// ad-hoc uploads. Returns the per-upload basenames and the commit SHA they're
+// reachable from. Embed URLs reference the commit SHA directly so they remain
+// valid across subsequent uploads as long as the ref is not deleted.
+func (c *GitDataClient) PushAttachments(repo *Repo, refPath, commitMessage string, files []string) ([]AttachmentPath, string, error) {
 	prefix := fmt.Sprintf("repos/%s/%s", repo.Owner, repo.Name)
-	refSuffix := fmt.Sprintf("uploads/issues/%d", prNumber) // path under refs/
+	refSuffix := refPath // path under refs/
 
 	// 0. Reject basename collisions before any API calls. Tree paths are basenames,
 	// so two source files with the same basename would silently overwrite each other.
@@ -58,7 +60,7 @@ func (c *GitDataClient) PushAttachments(repo *Repo, prNumber int, files []string
 		seenBasename[base] = f
 	}
 
-	// 1. Check if our upload ref already exists for this PR/issue
+	// 1. Check if our upload ref already exists for this target
 	parentCommitSHA := ""
 	baseTreeSHA := ""
 
@@ -135,7 +137,7 @@ func (c *GitDataClient) PushAttachments(repo *Repo, prNumber int, files []string
 
 	// 4. Create commit (fast-forward chain so older blobs stay reachable)
 	commitReq := map[string]interface{}{
-		"message": fmt.Sprintf("upload for #%d", prNumber),
+		"message": commitMessage,
 		"tree":    treeResp.SHA,
 	}
 	if parentCommitSHA != "" {

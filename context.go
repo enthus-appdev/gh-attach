@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"regexp"
 	"strings"
 )
 
@@ -66,6 +67,47 @@ func resolveRepo(override string) (*Repo, error) {
 		return nil, fmt.Errorf("git remote get-url origin: %w", err)
 	}
 	return parseRepoFromRemote(strings.TrimSpace(string(out)))
+}
+
+// keyCharset is the set of characters allowed in an ad-hoc --key value.
+// It is a safe subset of git's ref-name rules: alphanumerics, underscore,
+// dash, dot, and forward slash for hierarchical keys like "docs/arch".
+var keyCharset = regexp.MustCompile(`^[a-zA-Z0-9_][a-zA-Z0-9._/-]*$`)
+
+// keyPureNumeric matches keys that are only digits. These are rejected
+// because they would be visually confusable with PR/issue numbers stored
+// under refs/uploads/issues/<N>.
+var keyPureNumeric = regexp.MustCompile(`^[0-9]+$`)
+
+// validateKey returns an error if key is not a legal --key value. It
+// enforces a strict safe subset of git ref name rules so that every
+// accepted key can be used as-is in refs/uploads/misc/<key>.
+func validateKey(key string) error {
+	if key == "" {
+		return fmt.Errorf("--key cannot be empty")
+	}
+	if len(key) > 100 {
+		return fmt.Errorf("--key must be 100 characters or fewer (got %d)", len(key))
+	}
+	if keyPureNumeric.MatchString(key) {
+		return fmt.Errorf("--key cannot be purely numeric (confusable with a PR/issue number — try a descriptive name like %q)", "k"+key)
+	}
+	if !keyCharset.MatchString(key) {
+		return fmt.Errorf("--key %q contains invalid characters (allowed: letters, digits, '.', '_', '-', '/'; must start with a letter, digit, or underscore)", key)
+	}
+	if strings.Contains(key, "..") {
+		return fmt.Errorf("--key cannot contain '..' (git ref name rule)")
+	}
+	if strings.Contains(key, "//") {
+		return fmt.Errorf("--key cannot contain '//'")
+	}
+	if strings.HasSuffix(key, "/") {
+		return fmt.Errorf("--key cannot end with '/'")
+	}
+	if strings.HasSuffix(key, ".lock") {
+		return fmt.Errorf("--key cannot end with '.lock' (git ref name rule)")
+	}
+	return nil
 }
 
 // resolvePR auto-detects the PR number for the current branch using gh.

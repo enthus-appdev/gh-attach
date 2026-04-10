@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -54,6 +55,74 @@ func TestParseRepoFromRemote(t *testing.T) {
 			}
 			if r.Name != tt.repo {
 				t.Errorf("name = %q, want %q", r.Name, tt.repo)
+			}
+		})
+	}
+}
+
+func TestValidateKey(t *testing.T) {
+	tests := []struct {
+		name       string
+		key        string
+		wantErr    bool
+		errSubstr  string // when wantErr: expected substring in the error message
+	}{
+		// --- Accepted ---
+		{name: "simple lowercase", key: "design-v2"},
+		{name: "single char", key: "a"},
+		{name: "leading underscore", key: "_internal"},
+		{name: "mixed case", key: "DesignV2"},
+		{name: "subpath", key: "docs/arch-diagram"},
+		{name: "deep subpath", key: "releases/v1.0/screenshots"},
+		{name: "starts with digit", key: "2026-report"},
+		{name: "key with dot", key: "config.v1"},
+		{name: "starts-with-numeric-but-not-all", key: "k123"},
+		{name: "max length (100)", key: strings.Repeat("a", 100)},
+
+		// --- Rejected: empty & length ---
+		{name: "empty", key: "", wantErr: true, errSubstr: "empty"},
+		{name: "too long (101)", key: strings.Repeat("a", 101), wantErr: true, errSubstr: "100 characters"},
+
+		// --- Rejected: purely numeric (confusable with PR/issue number) ---
+		{name: "pure numeric", key: "123", wantErr: true, errSubstr: "purely numeric"},
+		{name: "single digit", key: "1", wantErr: true, errSubstr: "purely numeric"},
+
+		// --- Rejected: leading character rules ---
+		{name: "leading dot (hidden)", key: ".hidden", wantErr: true, errSubstr: "invalid"},
+		{name: "leading dash", key: "-foo", wantErr: true, errSubstr: "invalid"},
+		{name: "leading slash", key: "/foo", wantErr: true, errSubstr: "invalid"},
+
+		// --- Rejected: git ref name rules ---
+		{name: "contains ..", key: "foo..bar", wantErr: true, errSubstr: ".."},
+		{name: "contains //", key: "foo//bar", wantErr: true, errSubstr: "//"},
+		{name: "trailing slash", key: "foo/", wantErr: true, errSubstr: "end with '/'"},
+		{name: "ends with .lock", key: "design.lock", wantErr: true, errSubstr: ".lock"},
+
+		// --- Rejected: charset violations ---
+		{name: "contains space", key: "foo bar", wantErr: true, errSubstr: "invalid"},
+		{name: "contains @", key: "foo@bar", wantErr: true, errSubstr: "invalid"},
+		{name: "contains :", key: "foo:bar", wantErr: true, errSubstr: "invalid"},
+		{name: "contains ?", key: "foo?bar", wantErr: true, errSubstr: "invalid"},
+		{name: "contains *", key: "foo*bar", wantErr: true, errSubstr: "invalid"},
+		{name: "contains tilde", key: "foo~bar", wantErr: true, errSubstr: "invalid"},
+		{name: "contains caret", key: "foo^bar", wantErr: true, errSubstr: "invalid"},
+		{name: "contains backslash", key: "foo\\bar", wantErr: true, errSubstr: "invalid"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateKey(tt.key)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("expected error for %q, got nil", tt.key)
+				}
+				if tt.errSubstr != "" && !strings.Contains(err.Error(), tt.errSubstr) {
+					t.Errorf("error = %q, want substring %q", err.Error(), tt.errSubstr)
+				}
+				return
+			}
+			if err != nil {
+				t.Errorf("unexpected error for %q: %v", tt.key, err)
 			}
 		})
 	}

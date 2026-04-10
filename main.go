@@ -13,12 +13,17 @@ func main() {
 	title := flag.String("title", "", "Label for the upload group")
 	postComment := flag.Bool("comment", false, "Also post (or upsert) the markdown as a PR/issue comment")
 	repoOverride := flag.String("repo", "", "Target repo as OWNER/NAME or a GitHub URL (default: origin of the current clone)")
+	key := flag.String("key", "", "Upload to an ad-hoc key under refs/uploads/misc/KEY instead of a PR/issue (mutually exclusive with NUMBER and --comment)")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Upload images to a GitHub PR or issue and print embeddable markdown to stdout.\n\n")
 		fmt.Fprintf(os.Stderr, "Usage:\n")
-		fmt.Fprintf(os.Stderr, "  gh attach [flags] [NUMBER] FILE...\n\n")
+		fmt.Fprintf(os.Stderr, "  gh attach [flags] [NUMBER] FILE...\n")
+		fmt.Fprintf(os.Stderr, "  gh attach [flags] --key KEY FILE...\n\n")
 		fmt.Fprintf(os.Stderr, "If NUMBER is omitted, it is auto-detected as a PR from the current branch.\n")
-		fmt.Fprintf(os.Stderr, "NUMBER must be passed explicitly whenever --repo is used.\n\n")
+		fmt.Fprintf(os.Stderr, "NUMBER or --key must be passed explicitly whenever --repo is used.\n\n")
+		fmt.Fprintf(os.Stderr, "Use --key to upload without a PR/issue — e.g. for a README image or a\n")
+		fmt.Fprintf(os.Stderr, "not-yet-created issue. Ad-hoc uploads are stored under refs/uploads/misc/KEY\n")
+		fmt.Fprintf(os.Stderr, "and are NOT auto-cleaned by the cleanup workflow — see README for manual removal.\n\n")
 		fmt.Fprintf(os.Stderr, "By default, the rendered markdown is written to stdout and no comment is\n")
 		fmt.Fprintf(os.Stderr, "posted. Pass --comment to also upsert the markdown as a PR/issue comment.\n\n")
 		fmt.Fprintf(os.Stderr, "Flags:\n")
@@ -39,7 +44,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := run(number, files, *title, *postComment, *repoOverride); err != nil {
+	if err := run(number, files, *title, *postComment, *repoOverride, *key); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
@@ -53,7 +58,20 @@ func parseArgs(args []string) (int, []string) {
 	return 0, args
 }
 
-func run(number int, filePaths []string, title string, postComment bool, repoOverride string) error {
+func run(number int, filePaths []string, title string, postComment bool, repoOverride, key string) error {
+	// Argument conflicts — fail fast before any network work.
+	if number != 0 && key != "" {
+		return fmt.Errorf("cannot combine NUMBER with --key — they target different ref namespaces")
+	}
+	if key != "" && postComment {
+		return fmt.Errorf("--comment requires a PR/issue number and is incompatible with --key")
+	}
+	if key != "" {
+		if err := validateKey(key); err != nil {
+			return err
+		}
+	}
+
 	// Resolve repo context
 	repo, err := resolveRepo(repoOverride)
 	if err != nil {
@@ -63,16 +81,16 @@ func run(number int, filePaths []string, title string, postComment bool, repoOve
 	// PR auto-detection uses `gh pr view` on the current branch, which
 	// only makes sense inside a clone of the target repo. Any use of
 	// --repo means the caller is being explicit about the target, so
-	// require NUMBER explicitly too — we don't try to detect whether
-	// the override happens to match the current clone.
-	if number == 0 && repoOverride != "" {
-		return fmt.Errorf("--repo requires an explicit NUMBER (PR auto-detection only works inside a clone of the target repo)")
+	// require NUMBER (or --key) explicitly too — we don't try to detect
+	// whether the override happens to match the current clone.
+	if number == 0 && key == "" && repoOverride != "" {
+		return fmt.Errorf("--repo requires an explicit NUMBER or --key (PR auto-detection only works inside a clone of the target repo)")
 	}
 
 	// Resolve number from the current branch's PR if not provided.
 	// Auto-detection only covers PRs (via `gh pr view`); to target an
-	// issue, pass its number explicitly.
-	if number == 0 {
+	// issue, pass its number explicitly. Skipped entirely in key mode.
+	if number == 0 && key == "" {
 		number, err = resolvePR(repo)
 		if err != nil {
 			return fmt.Errorf("resolve PR: %w", err)
@@ -85,14 +103,28 @@ func run(number int, filePaths []string, title string, postComment bool, repoOve
 		return err
 	}
 
-	fmt.Fprintf(os.Stderr, "Uploading %d file(s) to #%d in %s/%s...\n", len(files), number, repo.Owner, repo.Name)
+	// Build the ref path, commit message, and user-facing target descriptor
+	// from the mode. gitdata.go's PushAttachments is namespace-agnostic —
+	// it takes whatever refPath it's given.
+	var refPath, commitMessage, target string
+	if key != "" {
+		refPath = "uploads/misc/" + key
+		commitMessage = "upload for misc/" + key
+		target = "misc/" + key
+	} else {
+		refPath = fmt.Sprintf("uploads/issues/%d", number)
+		commitMessage = fmt.Sprintf("upload for #%d", number)
+		target = fmt.Sprintf("#%d", number)
+	}
 
-	// Push images to refs/uploads/issues/<N> via Git Data API
+	fmt.Fprintf(os.Stderr, "Uploading %d file(s) to %s in %s/%s...\n", len(files), target, repo.Owner, repo.Name)
+
+	// Push images to refs/<refPath> via Git Data API
 	client, err := NewGitDataClient()
 	if err != nil {
 		return fmt.Errorf("create git client: %w", err)
 	}
-	paths, commitSHA, err := client.PushAttachments(repo, number, files)
+	paths, commitSHA, err := client.PushAttachments(repo, refPath, commitMessage, files)
 	if err != nil {
 		return fmt.Errorf("push attachments: %w", err)
 	}

@@ -51,7 +51,7 @@ func TestPushAttachmentsCreatesBlob(t *testing.T) {
 	repo := &Repo{Owner: "owner", Name: "repo"}
 	client := &GitDataClient{BaseURL: srv.URL, Token: "test-token"}
 
-	paths, commitSHA, err := client.PushAttachments(repo, 42, []string{testFile})
+	paths, commitSHA, err := client.PushAttachments(repo, "uploads/issues/42", "upload for #42", []string{testFile})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -131,7 +131,7 @@ func TestPushAttachmentsAppendsToExistingRef(t *testing.T) {
 	repo := &Repo{Owner: "owner", Name: "repo"}
 	client := &GitDataClient{BaseURL: srv.URL, Token: "test-token"}
 
-	_, commitSHA, err := client.PushAttachments(repo, 42, []string{testFile})
+	_, commitSHA, err := client.PushAttachments(repo, "uploads/issues/42", "upload for #42", []string{testFile})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -147,6 +147,70 @@ func TestPushAttachmentsAppendsToExistingRef(t *testing.T) {
 		if c != expectedCalls[i] {
 			t.Errorf("call[%d] = %q, want %q", i, c, expectedCalls[i])
 		}
+	}
+}
+
+// TestPushAttachmentsUsesMiscRefPath asserts that PushAttachments is
+// namespace-agnostic: when called with an ad-hoc refPath like
+// "uploads/misc/design-v2", it hits that exact ref on the GitHub API and
+// uses the caller-supplied commit message. This is the core invariant
+// that backs the --key ad-hoc upload mode without duplicating the push
+// logic per namespace.
+func TestPushAttachmentsUsesMiscRefPath(t *testing.T) {
+	var postedRef string
+	var postedCommitMessage string
+
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("GET /repos/owner/repo/git/ref/uploads/misc/design-v2", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	})
+
+	mux.HandleFunc("POST /repos/owner/repo/git/blobs", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]string{"sha": "blob-sha"})
+	})
+
+	mux.HandleFunc("POST /repos/owner/repo/git/trees", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]string{"sha": "tree-sha"})
+	})
+
+	mux.HandleFunc("POST /repos/owner/repo/git/commits", func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]interface{}
+		json.NewDecoder(r.Body).Decode(&body)
+		if msg, ok := body["message"].(string); ok {
+			postedCommitMessage = msg
+		}
+		json.NewEncoder(w).Encode(map[string]string{"sha": "commit-sha"})
+	})
+
+	mux.HandleFunc("POST /repos/owner/repo/git/refs", func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]string
+		json.NewDecoder(r.Body).Decode(&body)
+		postedRef = body["ref"]
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(map[string]string{"ref": body["ref"]})
+	})
+
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "mockup.png")
+	os.WriteFile(testFile, []byte("fake-png-data"), 0644)
+
+	repo := &Repo{Owner: "owner", Name: "repo"}
+	client := &GitDataClient{BaseURL: srv.URL, Token: "test-token"}
+
+	_, _, err := client.PushAttachments(repo, "uploads/misc/design-v2", "upload for misc/design-v2", []string{testFile})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if postedRef != "refs/uploads/misc/design-v2" {
+		t.Errorf("created ref = %q, want %q", postedRef, "refs/uploads/misc/design-v2")
+	}
+	if postedCommitMessage != "upload for misc/design-v2" {
+		t.Errorf("commit message = %q, want %q", postedCommitMessage, "upload for misc/design-v2")
 	}
 }
 
@@ -177,7 +241,7 @@ func TestPushAttachmentsRejectsBasenameCollision(t *testing.T) {
 	repo := &Repo{Owner: "owner", Name: "repo"}
 	client := &GitDataClient{BaseURL: "http://127.0.0.1:1", Token: "test-token"}
 
-	_, _, err := client.PushAttachments(repo, 42, []string{file1, file2})
+	_, _, err := client.PushAttachments(repo, "uploads/issues/42", "upload for #42", []string{file1, file2})
 	if err == nil {
 		t.Fatal("expected error for basename collision, got nil")
 	}

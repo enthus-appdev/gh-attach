@@ -1,5 +1,7 @@
 # gh-pr-screenshot
 
+> **Deprecated — not maintained.** Use [drogers0/gh-image](https://github.com/drogers0/gh-image) instead, as recommended in [cli/cli#1895 (comment)](https://github.com/cli/cli/issues/1895#issuecomment-4140089593).
+
 A [gh](https://cli.github.com/) extension for uploading screenshots to GitHub PRs.
 
 Images are pushed to an auth-protected `claude/_screenshots` branch and linked inline in a PR comment. No public URLs, no gists — image access is gated by repo visibility.

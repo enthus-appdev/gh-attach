@@ -1,3 +1,3 @@
-module github.com/enthus-appdev/gh-pr-screenshot
+module github.com/enthus-appdev/gh-attach
 
 go 1.25.0

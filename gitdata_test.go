@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-func TestPushScreenshotsCreatesBlob(t *testing.T) {
+func TestPushAttachmentsCreatesBlob(t *testing.T) {
 	var calls []string
 
 	mux := http.NewServeMux()
@@ -51,7 +51,7 @@ func TestPushScreenshotsCreatesBlob(t *testing.T) {
 	repo := &Repo{Owner: "owner", Name: "repo"}
 	client := &GitDataClient{BaseURL: srv.URL, Token: "test-token"}
 
-	paths, commitSHA, err := client.PushScreenshots(repo, 42, []string{testFile})
+	paths, commitSHA, err := client.PushAttachments(repo, 42, []string{testFile})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -77,7 +77,7 @@ func TestPushScreenshotsCreatesBlob(t *testing.T) {
 	}
 }
 
-func TestPushScreenshotsAppendsToExistingBranch(t *testing.T) {
+func TestPushAttachmentsAppendsToExistingRef(t *testing.T) {
 	var calls []string
 
 	mux := http.NewServeMux()
@@ -131,7 +131,7 @@ func TestPushScreenshotsAppendsToExistingBranch(t *testing.T) {
 	repo := &Repo{Owner: "owner", Name: "repo"}
 	client := &GitDataClient{BaseURL: srv.URL, Token: "test-token"}
 
-	_, commitSHA, err := client.PushScreenshots(repo, 42, []string{testFile})
+	_, commitSHA, err := client.PushAttachments(repo, 42, []string{testFile})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -150,11 +150,11 @@ func TestPushScreenshotsAppendsToExistingBranch(t *testing.T) {
 	}
 }
 
-// TestPushScreenshotsRejectsBasenameCollision asserts the pre-flight check
+// TestPushAttachmentsRejectsBasenameCollision asserts the pre-flight check
 // that two source files with the same basename in a single upload are
 // rejected before any GitHub API calls. Without this check, the second
 // file would silently overwrite the first in the tree.
-func TestPushScreenshotsRejectsBasenameCollision(t *testing.T) {
+func TestPushAttachmentsRejectsBasenameCollision(t *testing.T) {
 	tmpDir := t.TempDir()
 	dir1 := filepath.Join(tmpDir, "a")
 	dir2 := filepath.Join(tmpDir, "b")
@@ -177,7 +177,7 @@ func TestPushScreenshotsRejectsBasenameCollision(t *testing.T) {
 	repo := &Repo{Owner: "owner", Name: "repo"}
 	client := &GitDataClient{BaseURL: "http://127.0.0.1:1", Token: "test-token"}
 
-	_, _, err := client.PushScreenshots(repo, 42, []string{file1, file2})
+	_, _, err := client.PushAttachments(repo, 42, []string{file1, file2})
 	if err == nil {
 		t.Fatal("expected error for basename collision, got nil")
 	}

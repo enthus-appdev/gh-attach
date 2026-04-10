@@ -9,7 +9,8 @@ import (
 	"strings"
 )
 
-const commentMarker = "<!-- pr-screenshots -->"
+// commentMarker identifies the gh-attach upsert comment on a PR/issue.
+const commentMarker = "<!-- gh-attach -->"
 
 // CommentClient interacts with the GitHub Issues API for PR comments.
 type CommentClient struct {
@@ -29,15 +30,15 @@ func NewCommentClient() (*CommentClient, error) {
 	}, nil
 }
 
-// formatComment builds the full markdown body for a screenshot comment.
+// formatComment builds the full markdown body for an attachment comment.
 // It is the marker + heading prefix followed by a single section, and is
 // only used when no existing comment is being upserted.
-func formatComment(repo *Repo, paths []ScreenshotPath, commitSHA, title string) string {
-	return commentMarker + "\n### Screenshots\n" + formatSection(repo, paths, commitSHA, title)
+func formatComment(repo *Repo, paths []AttachmentPath, commitSHA, title string) string {
+	return commentMarker + "\n### Attachments\n" + formatSection(repo, paths, commitSHA, title)
 }
 
 // formatSection builds just the new section (without marker/header) for appending.
-func formatSection(repo *Repo, paths []ScreenshotPath, commitSHA, title string) string {
+func formatSection(repo *Repo, paths []AttachmentPath, commitSHA, title string) string {
 	var b strings.Builder
 
 	if title != "" {
@@ -90,8 +91,8 @@ func formatSection(repo *Repo, paths []ScreenshotPath, commitSHA, title string) 
 	return b.String()
 }
 
-// UpsertComment creates or updates the screenshot comment on a PR.
-func (c *CommentClient) UpsertComment(repo *Repo, prNumber int, paths []ScreenshotPath, commitSHA, title string) (string, error) {
+// UpsertComment creates or updates the attachment comment on a PR.
+func (c *CommentClient) UpsertComment(repo *Repo, prNumber int, paths []AttachmentPath, commitSHA, title string) (string, error) {
 	prefix := fmt.Sprintf("repos/%s/%s", repo.Owner, repo.Name)
 
 	existingID, existingBody, existingURL, err := c.findMarkerComment(prefix, prNumber)

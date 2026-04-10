@@ -1,11 +1,11 @@
-# Deletes the gh-pr-screenshot upload ref (refs/uploads/issues/<N>) when the
+# Deletes the gh-attach upload ref (refs/uploads/issues/<N>) when the
 # matching PR or issue is closed, freeing the orphan commits and blobs for
 # GitHub's next garbage-collection run.
 #
 # To install in another repo: copy this file unchanged to
-# .github/workflows/cleanup-pr-screenshots.yml in your repo. No customization
+# .github/workflows/cleanup-gh-attach.yml in your repo. No customization
 # is required — github.repository and the event payload provide everything.
-name: Cleanup gh-pr-screenshot upload refs
+name: Cleanup gh-attach upload refs
 
 on:
   pull_request:

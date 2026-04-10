@@ -9,12 +9,12 @@ import (
 )
 
 func main() {
-	title := flag.String("title", "", "Label for the screenshot group")
+	title := flag.String("title", "", "Label for the upload group")
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Upload screenshots to a GitHub PR.\n\n")
+		fmt.Fprintf(os.Stderr, "Upload images to a GitHub PR or issue.\n\n")
 		fmt.Fprintf(os.Stderr, "Usage:\n")
-		fmt.Fprintf(os.Stderr, "  gh pr-screenshot [PR_NUMBER] [flags] FILE...\n\n")
-		fmt.Fprintf(os.Stderr, "If PR_NUMBER is omitted, it is auto-detected from the current branch.\n\n")
+		fmt.Fprintf(os.Stderr, "  gh attach [flags] [NUMBER] FILE...\n\n")
+		fmt.Fprintf(os.Stderr, "If NUMBER is omitted, it is auto-detected as a PR from the current branch.\n\n")
 		fmt.Fprintf(os.Stderr, "Flags:\n")
 		flag.PrintDefaults()
 	}
@@ -26,20 +26,20 @@ func main() {
 		os.Exit(1)
 	}
 
-	prNumber, files := parseArgs(args)
+	number, files := parseArgs(args)
 
 	if len(files) == 0 {
 		fmt.Fprintln(os.Stderr, "error: no image files specified")
 		os.Exit(1)
 	}
 
-	if err := run(prNumber, files, *title); err != nil {
+	if err := run(number, files, *title); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
 }
 
-// parseArgs separates an optional leading PR number from the file list.
+// parseArgs separates an optional leading PR or issue number from the file list.
 func parseArgs(args []string) (int, []string) {
 	if n, err := strconv.Atoi(args[0]); err == nil && n > 0 {
 		return n, args[1:]
@@ -47,16 +47,18 @@ func parseArgs(args []string) (int, []string) {
 	return 0, args
 }
 
-func run(prNumber int, filePaths []string, title string) error {
+func run(number int, filePaths []string, title string) error {
 	// Resolve repo context
 	repo, err := resolveRepo()
 	if err != nil {
 		return fmt.Errorf("resolve repo: %w", err)
 	}
 
-	// Resolve PR number if not provided
-	if prNumber == 0 {
-		prNumber, err = resolvePR(repo)
+	// Resolve number from the current branch's PR if not provided.
+	// Auto-detection only covers PRs (via `gh pr view`); to target an
+	// issue, pass its number explicitly.
+	if number == 0 {
+		number, err = resolvePR(repo)
 		if err != nil {
 			return fmt.Errorf("resolve PR: %w", err)
 		}
@@ -68,16 +70,16 @@ func run(prNumber int, filePaths []string, title string) error {
 		return err
 	}
 
-	fmt.Fprintf(os.Stderr, "Uploading %d file(s) to PR #%d in %s/%s...\n", len(files), prNumber, repo.Owner, repo.Name)
+	fmt.Fprintf(os.Stderr, "Uploading %d file(s) to #%d in %s/%s...\n", len(files), number, repo.Owner, repo.Name)
 
 	// Push images to refs/uploads/issues/<N> via Git Data API
 	client, err := NewGitDataClient()
 	if err != nil {
 		return fmt.Errorf("create git client: %w", err)
 	}
-	paths, commitSHA, err := client.PushScreenshots(repo, prNumber, files)
+	paths, commitSHA, err := client.PushAttachments(repo, number, files)
 	if err != nil {
-		return fmt.Errorf("push screenshots: %w", err)
+		return fmt.Errorf("push attachments: %w", err)
 	}
 
 	// Post/update PR comment
@@ -85,7 +87,7 @@ func run(prNumber int, filePaths []string, title string) error {
 	if err != nil {
 		return fmt.Errorf("create comment client: %w", err)
 	}
-	commentURL, err := commentClient.UpsertComment(repo, prNumber, paths, commitSHA, title)
+	commentURL, err := commentClient.UpsertComment(repo, number, paths, commitSHA, title)
 	if err != nil {
 		return fmt.Errorf("upsert comment: %w", err)
 	}

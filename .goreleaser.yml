@@ -1,7 +1,7 @@
 version: 2
 
 builds:
-  - binary: gh-pr-screenshot
+  - binary: gh-attach
     goos:
       - darwin
       - linux

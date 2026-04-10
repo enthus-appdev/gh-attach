@@ -1,6 +1,6 @@
 # Locally-built binary (release artifacts ship via GoReleaser, see .goreleaser.yml)
-/gh-pr-screenshot
-/gh-pr-screenshot.exe
+/gh-attach
+/gh-attach.exe
 
 # GoReleaser output
 /dist/

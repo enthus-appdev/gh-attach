@@ -29,59 +29,11 @@ func NewCommentClient() (*CommentClient, error) {
 	}, nil
 }
 
-// formatComment builds the full markdown body for a screenshot comment (including marker and header).
+// formatComment builds the full markdown body for a screenshot comment.
+// It is the marker + heading prefix followed by a single section, and is
+// only used when no existing comment is being upserted.
 func formatComment(repo *Repo, paths []ScreenshotPath, commitSHA, title string) string {
-	var b strings.Builder
-	b.WriteString(commentMarker + "\n### Screenshots\n")
-
-	if title != "" {
-		b.WriteString(fmt.Sprintf("\n**%s**\n\n", title))
-	} else {
-		b.WriteString("\n")
-	}
-
-	type imageEntry struct {
-		name string
-		url  string
-	}
-	var images []imageEntry
-	for _, p := range paths {
-		url := fmt.Sprintf("https://github.com/%s/%s/blob/%s/%s?raw=true", repo.Owner, repo.Name, commitSHA, p.Path)
-		images = append(images, imageEntry{name: p.Path, url: url})
-	}
-
-	cols := 2
-	if len(images) == 1 {
-		cols = 1
-	}
-
-	for i := 0; i < len(images); i += cols {
-		end := i + cols
-		if end > len(images) {
-			end = len(images)
-		}
-		row := images[i:end]
-
-		headers := make([]string, len(row))
-		for j, img := range row {
-			headers[j] = img.name
-		}
-		b.WriteString("| " + strings.Join(headers, " | ") + " |\n")
-
-		seps := make([]string, len(row))
-		for j := range row {
-			seps[j] = "---"
-		}
-		b.WriteString("|" + strings.Join(seps, "|") + "|\n")
-
-		cells := make([]string, len(row))
-		for j, img := range row {
-			cells[j] = fmt.Sprintf("![%s](%s)", img.name, img.url)
-		}
-		b.WriteString("| " + strings.Join(cells, " | ") + " |\n\n")
-	}
-
-	return b.String()
+	return commentMarker + "\n### Screenshots\n" + formatSection(repo, paths, commitSHA, title)
 }
 
 // formatSection builds just the new section (without marker/header) for appending.

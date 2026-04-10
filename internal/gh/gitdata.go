@@ -1,4 +1,4 @@
-package main
+package gh
 
 import (
 	"bytes"
@@ -8,9 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strings"
 )
 
 // AttachmentPath holds the tree-relative path of an uploaded attachment.
@@ -274,13 +272,4 @@ func (c *GitDataClient) patch(path string, payload interface{}) error {
 		return fmt.Errorf("PATCH %s: %d — %s", path, resp.StatusCode, respBody)
 	}
 	return nil
-}
-
-// ghAuthToken retrieves the GitHub auth token from gh CLI.
-func ghAuthToken() (string, error) {
-	out, err := exec.Command("gh", "auth", "token").Output()
-	if err != nil {
-		return "", fmt.Errorf("gh auth token: %w (is gh authenticated?)", err)
-	}
-	return strings.TrimSpace(string(out)), nil
 }

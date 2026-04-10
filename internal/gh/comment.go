@@ -1,4 +1,4 @@
-package main
+package gh
 
 import (
 	"bytes"
@@ -34,11 +34,13 @@ func NewCommentClient() (*CommentClient, error) {
 // It is the marker + heading prefix followed by a single section, and is
 // only used when no existing comment is being upserted.
 func formatComment(repo *Repo, paths []AttachmentPath, commitSHA, title string) string {
-	return commentMarker + "\n### Attachments\n" + formatSection(repo, paths, commitSHA, title)
+	return commentMarker + "\n### Attachments\n" + FormatSection(repo, paths, commitSHA, title)
 }
 
-// formatSection builds just the new section (without marker/header) for appending.
-func formatSection(repo *Repo, paths []AttachmentPath, commitSHA, title string) string {
+// FormatSection builds just the image table (without marker or heading)
+// and is used for both stdout output from the CLI and the appended
+// section in an upserted PR/issue comment.
+func FormatSection(repo *Repo, paths []AttachmentPath, commitSHA, title string) string {
 	var b strings.Builder
 
 	if title != "" {
@@ -101,7 +103,7 @@ func (c *CommentClient) UpsertComment(repo *Repo, prNumber int, paths []Attachme
 	}
 
 	if existingID != 0 {
-		updatedBody := existingBody + "\n---\n" + formatSection(repo, paths, commitSHA, title)
+		updatedBody := existingBody + "\n---\n" + FormatSection(repo, paths, commitSHA, title)
 		url, err := c.updateComment(prefix, existingID, updatedBody)
 		if err != nil {
 			return "", err

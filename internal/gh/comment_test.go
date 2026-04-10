@@ -1,4 +1,4 @@
-package main
+package gh
 
 import (
 	"encoding/json"

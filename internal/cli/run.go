@@ -1,0 +1,164 @@
+package cli
+
+import (
+	"flag"
+	"fmt"
+	"io"
+	"strings"
+
+	"github.com/enthus-appdev/gh-attach/internal/gh"
+)
+
+// Run parses args, runs the upload flow, and returns the process exit
+// code. stdout receives the rendered markdown (the primary composable
+// output); stderr receives progress messages, the directly-embeddable
+// URL list, and any error details. This is the function the command
+// entry point calls, and the function test code exercises.
+func Run(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("gh-attach", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+
+	title := fs.String("title", "", "Label for the upload group")
+	postComment := fs.Bool("comment", false, "Also post (or upsert) the markdown as a PR/issue comment")
+	repoOverride := fs.String("repo", "", "Target repo as OWNER/NAME or a GitHub URL (default: origin of the current clone)")
+	key := fs.String("key", "", "Upload to an ad-hoc key under refs/uploads/misc/KEY instead of a PR/issue (mutually exclusive with NUMBER and --comment)")
+
+	fs.Usage = func() {
+		_, _ = fmt.Fprintf(stderr,"Upload images to a GitHub PR or issue and print embeddable markdown to stdout.\n\n")
+		_, _ = fmt.Fprintf(stderr,"Usage:\n")
+		_, _ = fmt.Fprintf(stderr,"  gh attach [flags] [NUMBER] FILE...\n")
+		_, _ = fmt.Fprintf(stderr,"  gh attach [flags] --key KEY FILE...\n\n")
+		_, _ = fmt.Fprintf(stderr,"If NUMBER is omitted, it is auto-detected as a PR from the current branch.\n")
+		_, _ = fmt.Fprintf(stderr,"NUMBER or --key must be passed explicitly whenever --repo is used.\n\n")
+		_, _ = fmt.Fprintf(stderr,"Use --key to upload without a PR/issue — e.g. for a README image or a\n")
+		_, _ = fmt.Fprintf(stderr,"not-yet-created issue. Ad-hoc uploads are stored under refs/uploads/misc/KEY\n")
+		_, _ = fmt.Fprintf(stderr,"and are NOT auto-cleaned by the cleanup workflow — see README for manual removal.\n\n")
+		_, _ = fmt.Fprintf(stderr,"By default, the rendered markdown is written to stdout and no comment is\n")
+		_, _ = fmt.Fprintf(stderr,"posted. Pass --comment to also upsert the markdown as a PR/issue comment.\n\n")
+		_, _ = fmt.Fprintf(stderr,"Flags:\n")
+		fs.PrintDefaults()
+	}
+
+	if err := fs.Parse(args); err != nil {
+		// flag.ContinueOnError already wrote the error + usage to stderr.
+		return 1
+	}
+
+	remaining := fs.Args()
+	if len(remaining) == 0 {
+		fs.Usage()
+		return 1
+	}
+
+	number, filePaths := parseArgs(remaining)
+	if len(filePaths) == 0 {
+		_, _ = fmt.Fprintln(stderr,"error: no image files specified")
+		return 1
+	}
+
+	if err := runUpload(number, filePaths, *title, *postComment, *repoOverride, *key, stdout, stderr); err != nil {
+		_, _ = fmt.Fprintf(stderr,"error: %v\n", err)
+		return 1
+	}
+	return 0
+}
+
+// runUpload holds the post-flag-parse orchestration. It's split out
+// from Run so tests can exercise it with already-parsed flag values.
+func runUpload(number int, filePaths []string, title string, postComment bool, repoOverride, key string, stdout, stderr io.Writer) error {
+	// Argument conflicts — fail fast before any network work.
+	if number != 0 && key != "" {
+		return fmt.Errorf("cannot combine NUMBER with --key — they target different ref namespaces")
+	}
+	if key != "" && postComment {
+		return fmt.Errorf("--comment requires a PR/issue number and is incompatible with --key")
+	}
+	if key != "" {
+		if err := gh.ValidateKey(key); err != nil {
+			return err
+		}
+	}
+
+	// Resolve repo context
+	repo, err := gh.ResolveRepo(repoOverride)
+	if err != nil {
+		return fmt.Errorf("resolve repo: %w", err)
+	}
+
+	// PR auto-detection uses `gh pr view` on the current branch, which
+	// only makes sense inside a clone of the target repo. Any use of
+	// --repo means the caller is being explicit about the target, so
+	// require NUMBER (or --key) explicitly too.
+	if number == 0 && key == "" && repoOverride != "" {
+		return fmt.Errorf("--repo requires an explicit NUMBER or --key (PR auto-detection only works inside a clone of the target repo)")
+	}
+
+	// Resolve number from the current branch's PR if not provided.
+	// Auto-detection only covers PRs (via `gh pr view`); to target an
+	// issue, pass its number explicitly. Skipped entirely in key mode.
+	if number == 0 && key == "" {
+		number, err = gh.ResolvePR(repo)
+		if err != nil {
+			return fmt.Errorf("resolve PR: %w", err)
+		}
+	}
+
+	// Expand globs and validate files exist
+	files, err := expandFiles(filePaths)
+	if err != nil {
+		return err
+	}
+
+	// Build the ref path, commit message, and user-facing target
+	// descriptor from the mode. gh.PushAttachments is namespace-agnostic
+	// — it takes whatever refPath it's given.
+	var refPath, commitMessage, target string
+	if key != "" {
+		refPath = "uploads/misc/" + key
+		commitMessage = "upload for misc/" + key
+		target = "misc/" + key
+	} else {
+		refPath = fmt.Sprintf("uploads/issues/%d", number)
+		commitMessage = fmt.Sprintf("upload for #%d", number)
+		target = fmt.Sprintf("#%d", number)
+	}
+
+	_, _ = fmt.Fprintf(stderr,"Uploading %d file(s) to %s in %s/%s...\n", len(files), target, repo.Owner, repo.Name)
+
+	// Push images to refs/<refPath> via Git Data API
+	client, err := gh.NewGitDataClient()
+	if err != nil {
+		return fmt.Errorf("create git client: %w", err)
+	}
+	paths, commitSHA, err := client.PushAttachments(repo, refPath, commitMessage, files)
+	if err != nil {
+		return fmt.Errorf("push attachments: %w", err)
+	}
+
+	// Always emit the rendered markdown to stdout so the caller can embed
+	// it anywhere — PR body, Slack, issue template, pbcopy, etc.
+	markdown := strings.TrimSpace(gh.FormatSection(repo, paths, commitSHA, title))
+	_, _ = fmt.Fprintln(stdout, markdown)
+
+	// Always emit the raw, directly-embeddable URLs to stderr so the user
+	// sees actionable references in their terminal even when stdout is piped.
+	_, _ = fmt.Fprintln(stderr,"Uploaded:")
+	for _, p := range paths {
+		_, _ = fmt.Fprintf(stderr,"  https://github.com/%s/%s/blob/%s/%s?raw=true\n", repo.Owner, repo.Name, commitSHA, p.Path)
+	}
+
+	// Opt-in side-effect: also post/upsert the markdown as a PR/issue comment.
+	if postComment {
+		commentClient, err := gh.NewCommentClient()
+		if err != nil {
+			return fmt.Errorf("create comment client: %w", err)
+		}
+		commentURL, err := commentClient.UpsertComment(repo, number, paths, commitSHA, title)
+		if err != nil {
+			return fmt.Errorf("upsert comment: %w", err)
+		}
+		_, _ = fmt.Fprintf(stderr,"Commented: %s\n", commentURL)
+	}
+
+	return nil
+}

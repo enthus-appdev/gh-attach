@@ -1,5 +1,8 @@
 # gh-attach
 
+[![Go](https://github.com/enthus-appdev/gh-attach/actions/workflows/go.yml/badge.svg)](https://github.com/enthus-appdev/gh-attach/actions/workflows/go.yml)
+[![Coverage](https://github.com/enthus-appdev/gh-attach/blob/badges/.badges/main/coverage.svg)](https://github.com/enthus-appdev/gh-attach/actions/workflows/go.yml)
+
 A [gh](https://cli.github.com/) extension for uploading images to GitHub PRs and issues, privately scoped to repo visibility.
 
 Images are pushed to an auth-protected ref under `refs/uploads/issues/<N>` (one per PR/issue, invisible in the Branches UI) and rendered as inline markdown via `blob/<commit-sha>/<file>?raw=true` URLs — written to stdout by default, optionally upserted as a PR/issue comment with `--comment`. No public URLs, no gists — image access is gated by repo visibility (private repos require an authenticated browser session to view).

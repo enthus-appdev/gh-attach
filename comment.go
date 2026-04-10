@@ -42,7 +42,7 @@ func formatSection(repo *Repo, paths []AttachmentPath, commitSHA, title string) 
 	var b strings.Builder
 
 	if title != "" {
-		b.WriteString(fmt.Sprintf("\n**%s**\n\n", title))
+		fmt.Fprintf(&b, "\n**%s**\n\n", title)
 	} else {
 		b.WriteString("\n")
 	}
@@ -129,7 +129,7 @@ func (c *CommentClient) findMarkerComment(prefix string, prNumber int) (int, str
 	if err != nil {
 		return 0, "", "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(resp.Body)
@@ -169,7 +169,7 @@ func (c *CommentClient) createComment(prefix string, prNumber int, body string) 
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode >= 300 {
 		respBody, _ := io.ReadAll(resp.Body)
@@ -179,7 +179,9 @@ func (c *CommentClient) createComment(prefix string, prNumber int, body string) 
 	var result struct {
 		HTMLURL string `json:"html_url"`
 	}
-	json.NewDecoder(resp.Body).Decode(&result)
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("decode response: %w", err)
+	}
 	return result.HTMLURL, nil
 }
 
@@ -199,7 +201,7 @@ func (c *CommentClient) updateComment(prefix string, commentID int, body string)
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode >= 300 {
 		respBody, _ := io.ReadAll(resp.Body)
@@ -209,6 +211,8 @@ func (c *CommentClient) updateComment(prefix string, commentID int, body string)
 	var result struct {
 		HTMLURL string `json:"html_url"`
 	}
-	json.NewDecoder(resp.Body).Decode(&result)
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("decode response: %w", err)
+	}
 	return result.HTMLURL, nil
 }

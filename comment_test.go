@@ -69,16 +69,16 @@ func TestUpsertCommentCreatesNew(t *testing.T) {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /repos/owner/repo/issues/42/comments", func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode([]interface{}{})
+		_ = json.NewEncoder(w).Encode([]interface{}{})
 	})
 
 	mux.HandleFunc("POST /repos/owner/repo/issues/42/comments", func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
 			Body string `json:"body"`
 		}
-		json.NewDecoder(r.Body).Decode(&body)
+		_ = json.NewDecoder(r.Body).Decode(&body)
 		createdBody = body.Body
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"id":       1,
 			"html_url": "https://github.com/owner/repo/pull/42#issuecomment-1",
 		})
@@ -114,7 +114,7 @@ func TestUpsertCommentAppendsToExisting(t *testing.T) {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /repos/owner/repo/issues/42/comments", func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode([]interface{}{
+		_ = json.NewEncoder(w).Encode([]interface{}{
 			map[string]interface{}{
 				"id":       99,
 				"body":     existingBody,
@@ -127,9 +127,9 @@ func TestUpsertCommentAppendsToExisting(t *testing.T) {
 		var body struct {
 			Body string `json:"body"`
 		}
-		json.NewDecoder(r.Body).Decode(&body)
+		_ = json.NewDecoder(r.Body).Decode(&body)
 		updatedBody = body.Body
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"id":       99,
 			"html_url": "https://github.com/owner/repo/pull/42#issuecomment-99",
 		})

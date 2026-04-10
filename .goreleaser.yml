@@ -10,10 +10,17 @@ builds:
       - arm64
 
 archives:
-  # Raw binary format with {os}-{arch} naming is what `gh extension install`
-  # looks for. Any other format (tar.gz, zip) or separator (_) causes gh to
-  # reject the release with "no usable release artifact or script found".
-  # See drogers0/gh-image for the canonical working template.
+  # `gh extension install` picks a release asset using
+  # `strings.HasSuffix(name, "{os}-{arch}" [+".exe"])` — see `installBin`
+  # in pkg/cmd/extension/manager.go in cli/cli. That literal suffix match
+  # has two hard requirements:
+  #   1. Raw binaries only. There is no archive-extraction logic in the
+  #      installer — `.tar.gz` / `.zip` assets are ignored regardless of
+  #      how they're named.
+  #   2. Hyphen separator between OS and arch. `os_arch` does not match
+  #      `HasSuffix(..., "os-arch")`.
+  # Both must hold. Changing either side reintroduces the "no usable
+  # release artifact or script found" error that broke v0.1.x and v0.2.0.
   - formats: ['binary']
     name_template: "{{ .Os }}-{{ .Arch }}"
 

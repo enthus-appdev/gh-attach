@@ -14,7 +14,7 @@ func TestPushScreenshotsCreatesBlob(t *testing.T) {
 
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("GET /repos/owner/repo/git/ref/heads/claude/_screenshots", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /repos/owner/repo/git/ref/uploads/issues/42", func(w http.ResponseWriter, r *http.Request) {
 		calls = append(calls, "GET ref")
 		w.WriteHeader(http.StatusNotFound)
 	})
@@ -37,7 +37,7 @@ func TestPushScreenshotsCreatesBlob(t *testing.T) {
 	mux.HandleFunc("POST /repos/owner/repo/git/refs", func(w http.ResponseWriter, r *http.Request) {
 		calls = append(calls, "POST ref")
 		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(map[string]string{"ref": "refs/heads/claude/_screenshots"})
+		json.NewEncoder(w).Encode(map[string]string{"ref": "refs/uploads/issues/42"})
 	})
 
 	srv := httptest.NewServer(mux)
@@ -50,16 +50,19 @@ func TestPushScreenshotsCreatesBlob(t *testing.T) {
 	repo := &Repo{Owner: "owner", Name: "repo"}
 	client := &GitDataClient{BaseURL: srv.URL, Token: "test-token"}
 
-	paths, err := client.PushScreenshots(repo, 42, []string{testFile})
+	paths, commitSHA, err := client.PushScreenshots(repo, 42, []string{testFile})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
+	if commitSHA != "commit-sha-1" {
+		t.Errorf("commitSHA = %q, want %q", commitSHA, "commit-sha-1")
+	}
 	if len(paths) != 1 {
 		t.Fatalf("expected 1 path, got %d", len(paths))
 	}
-	if paths[0].FileName != "test.png" {
-		t.Errorf("filename = %q, want %q", paths[0].FileName, "test.png")
+	if paths[0].Path != "test.png" {
+		t.Errorf("path = %q, want %q", paths[0].Path, "test.png")
 	}
 
 	expectedCalls := []string{"GET ref", "POST blob", "POST tree", "POST commit", "POST ref"}
@@ -78,7 +81,7 @@ func TestPushScreenshotsAppendsToExistingBranch(t *testing.T) {
 
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("GET /repos/owner/repo/git/ref/heads/claude/_screenshots", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /repos/owner/repo/git/ref/uploads/issues/42", func(w http.ResponseWriter, r *http.Request) {
 		calls = append(calls, "GET ref")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"object": map[string]string{"sha": "existing-commit-sha"},
@@ -112,9 +115,9 @@ func TestPushScreenshotsAppendsToExistingBranch(t *testing.T) {
 		json.NewEncoder(w).Encode(map[string]string{"sha": "new-commit-sha"})
 	})
 
-	mux.HandleFunc("PATCH /repos/owner/repo/git/refs/heads/claude/_screenshots", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("PATCH /repos/owner/repo/git/refs/uploads/issues/42", func(w http.ResponseWriter, r *http.Request) {
 		calls = append(calls, "PATCH ref")
-		json.NewEncoder(w).Encode(map[string]string{"ref": "refs/heads/claude/_screenshots"})
+		json.NewEncoder(w).Encode(map[string]string{"ref": "refs/uploads/issues/42"})
 	})
 
 	srv := httptest.NewServer(mux)
@@ -127,9 +130,12 @@ func TestPushScreenshotsAppendsToExistingBranch(t *testing.T) {
 	repo := &Repo{Owner: "owner", Name: "repo"}
 	client := &GitDataClient{BaseURL: srv.URL, Token: "test-token"}
 
-	_, err := client.PushScreenshots(repo, 42, []string{testFile})
+	_, commitSHA, err := client.PushScreenshots(repo, 42, []string{testFile})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+	if commitSHA != "new-commit-sha" {
+		t.Errorf("commitSHA = %q, want %q", commitSHA, "new-commit-sha")
 	}
 
 	expectedCalls := []string{"GET ref", "GET commit", "POST blob", "POST tree", "POST commit", "PATCH ref"}

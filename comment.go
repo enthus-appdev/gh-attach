@@ -30,7 +30,7 @@ func NewCommentClient() (*CommentClient, error) {
 }
 
 // formatComment builds the full markdown body for a screenshot comment (including marker and header).
-func formatComment(repo *Repo, paths []ScreenshotPath, title string) string {
+func formatComment(repo *Repo, paths []ScreenshotPath, commitSHA, title string) string {
 	var b strings.Builder
 	b.WriteString(commentMarker + "\n### Screenshots\n")
 
@@ -46,8 +46,8 @@ func formatComment(repo *Repo, paths []ScreenshotPath, title string) string {
 	}
 	var images []imageEntry
 	for _, p := range paths {
-		url := fmt.Sprintf("https://github.com/%s/%s/blob/claude/_screenshots/%s?raw=true", repo.Owner, repo.Name, p.BranchPath)
-		images = append(images, imageEntry{name: p.FileName, url: url})
+		url := fmt.Sprintf("https://github.com/%s/%s/blob/%s/%s?raw=true", repo.Owner, repo.Name, commitSHA, p.Path)
+		images = append(images, imageEntry{name: p.Path, url: url})
 	}
 
 	cols := 2
@@ -85,7 +85,7 @@ func formatComment(repo *Repo, paths []ScreenshotPath, title string) string {
 }
 
 // formatSection builds just the new section (without marker/header) for appending.
-func formatSection(repo *Repo, paths []ScreenshotPath, title string) string {
+func formatSection(repo *Repo, paths []ScreenshotPath, commitSHA, title string) string {
 	var b strings.Builder
 
 	if title != "" {
@@ -100,8 +100,8 @@ func formatSection(repo *Repo, paths []ScreenshotPath, title string) string {
 	}
 	var images []imageEntry
 	for _, p := range paths {
-		url := fmt.Sprintf("https://github.com/%s/%s/blob/claude/_screenshots/%s?raw=true", repo.Owner, repo.Name, p.BranchPath)
-		images = append(images, imageEntry{name: p.FileName, url: url})
+		url := fmt.Sprintf("https://github.com/%s/%s/blob/%s/%s?raw=true", repo.Owner, repo.Name, commitSHA, p.Path)
+		images = append(images, imageEntry{name: p.Path, url: url})
 	}
 
 	cols := 2
@@ -139,7 +139,7 @@ func formatSection(repo *Repo, paths []ScreenshotPath, title string) string {
 }
 
 // UpsertComment creates or updates the screenshot comment on a PR.
-func (c *CommentClient) UpsertComment(repo *Repo, prNumber int, paths []ScreenshotPath, title string) (string, error) {
+func (c *CommentClient) UpsertComment(repo *Repo, prNumber int, paths []ScreenshotPath, commitSHA, title string) (string, error) {
 	prefix := fmt.Sprintf("repos/%s/%s", repo.Owner, repo.Name)
 
 	existingID, existingBody, existingURL, err := c.findMarkerComment(prefix, prNumber)
@@ -148,7 +148,7 @@ func (c *CommentClient) UpsertComment(repo *Repo, prNumber int, paths []Screensh
 	}
 
 	if existingID != 0 {
-		updatedBody := existingBody + "\n---\n" + formatSection(repo, paths, title)
+		updatedBody := existingBody + "\n---\n" + formatSection(repo, paths, commitSHA, title)
 		url, err := c.updateComment(prefix, existingID, updatedBody)
 		if err != nil {
 			return "", err
@@ -159,7 +159,7 @@ func (c *CommentClient) UpsertComment(repo *Repo, prNumber int, paths []Screensh
 		return url, nil
 	}
 
-	fullBody := formatComment(repo, paths, title)
+	fullBody := formatComment(repo, paths, commitSHA, title)
 	return c.createComment(prefix, prNumber, fullBody)
 }
 

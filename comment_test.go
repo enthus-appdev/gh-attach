@@ -12,9 +12,10 @@ func TestFormatComment(t *testing.T) {
 	t.Run("single image with title", func(t *testing.T) {
 		repo := &Repo{Owner: "enthus-appdev", Name: "negsoft-gui"}
 		paths := []ScreenshotPath{
-			{BranchPath: "pr-123/20260401-120000-screenshot.png", FileName: "screenshot.png"},
+			{Path: "screenshot.png"},
 		}
-		body := formatComment(repo, paths, "After fix")
+		commitSHA := "1234567890abcdef1234567890abcdef12345678"
+		body := formatComment(repo, paths, commitSHA, "After fix")
 
 		if !strings.Contains(body, "<!-- pr-screenshots -->") {
 			t.Error("missing marker")
@@ -22,19 +23,20 @@ func TestFormatComment(t *testing.T) {
 		if !strings.Contains(body, "**After fix**") {
 			t.Error("missing title")
 		}
-		if !strings.Contains(body, "blob/claude/_screenshots/pr-123/20260401-120000-screenshot.png?raw=true") {
-			t.Error("missing image URL")
+		if !strings.Contains(body, "blob/1234567890abcdef1234567890abcdef12345678/screenshot.png?raw=true") {
+			t.Error("missing image URL with commit SHA")
 		}
 	})
 
 	t.Run("multiple images without title", func(t *testing.T) {
 		repo := &Repo{Owner: "enthus-appdev", Name: "negsoft-gui"}
 		paths := []ScreenshotPath{
-			{BranchPath: "pr-123/20260401-120000-a.png", FileName: "a.png"},
-			{BranchPath: "pr-123/20260401-120000-b.png", FileName: "b.png"},
-			{BranchPath: "pr-123/20260401-120000-c.png", FileName: "c.png"},
+			{Path: "a.png"},
+			{Path: "b.png"},
+			{Path: "c.png"},
 		}
-		body := formatComment(repo, paths, "")
+		commitSHA := "1234567890abcdef1234567890abcdef12345678"
+		body := formatComment(repo, paths, commitSHA, "")
 
 		if strings.Contains(body, "****") {
 			t.Error("empty title should not render")
@@ -47,9 +49,10 @@ func TestFormatComment(t *testing.T) {
 	t.Run("single image no title", func(t *testing.T) {
 		repo := &Repo{Owner: "enthus-appdev", Name: "negsoft-gui"}
 		paths := []ScreenshotPath{
-			{BranchPath: "pr-123/20260401-120000-shot.png", FileName: "shot.png"},
+			{Path: "shot.png"},
 		}
-		body := formatComment(repo, paths, "")
+		commitSHA := "1234567890abcdef1234567890abcdef12345678"
+		body := formatComment(repo, paths, commitSHA, "")
 
 		if strings.Contains(body, "****") {
 			t.Error("should not have empty title line")
@@ -86,9 +89,10 @@ func TestUpsertCommentCreatesNew(t *testing.T) {
 
 	client := &CommentClient{BaseURL: srv.URL, Token: "test-token"}
 	repo := &Repo{Owner: "owner", Name: "repo"}
-	paths := []ScreenshotPath{{BranchPath: "pr-42/test.png", FileName: "test.png"}}
+	paths := []ScreenshotPath{{Path: "test.png"}}
+	commitSHA := "deadbeefcafe1234567890abcdef1234567890ab"
 
-	url, err := client.UpsertComment(repo, 42, paths, "Test")
+	url, err := client.UpsertComment(repo, 42, paths, commitSHA, "Test")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -97,6 +101,9 @@ func TestUpsertCommentCreatesNew(t *testing.T) {
 	}
 	if !strings.Contains(createdBody, "<!-- pr-screenshots -->") {
 		t.Error("created comment missing marker")
+	}
+	if !strings.Contains(createdBody, "blob/deadbeefcafe1234567890abcdef1234567890ab/test.png?raw=true") {
+		t.Error("created comment missing commit-SHA-based URL")
 	}
 }
 
@@ -133,9 +140,10 @@ func TestUpsertCommentAppendsToExisting(t *testing.T) {
 
 	client := &CommentClient{BaseURL: srv.URL, Token: "test-token"}
 	repo := &Repo{Owner: "owner", Name: "repo"}
-	paths := []ScreenshotPath{{BranchPath: "pr-42/new.png", FileName: "new.png"}}
+	paths := []ScreenshotPath{{Path: "new.png"}}
+	commitSHA := "feed1234cafebabe1234567890abcdef12345678"
 
-	_, err := client.UpsertComment(repo, 42, paths, "New upload")
+	_, err := client.UpsertComment(repo, 42, paths, commitSHA, "New upload")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -144,5 +152,8 @@ func TestUpsertCommentAppendsToExisting(t *testing.T) {
 	}
 	if !strings.Contains(updatedBody, "New upload") {
 		t.Error("missing new content")
+	}
+	if !strings.Contains(updatedBody, "blob/feed1234cafebabe1234567890abcdef12345678/new.png?raw=true") {
+		t.Error("appended section missing commit-SHA-based URL for new upload")
 	}
 }

@@ -70,12 +70,12 @@ func run(prNumber int, filePaths []string, title string) error {
 
 	fmt.Fprintf(os.Stderr, "Uploading %d file(s) to PR #%d in %s/%s...\n", len(files), prNumber, repo.Owner, repo.Name)
 
-	// Push images to claude/_screenshots branch via Git Data API
+	// Push images to refs/uploads/issues/<N> via Git Data API
 	client, err := NewGitDataClient()
 	if err != nil {
 		return fmt.Errorf("create git client: %w", err)
 	}
-	paths, err := client.PushScreenshots(repo, prNumber, files)
+	paths, commitSHA, err := client.PushScreenshots(repo, prNumber, files)
 	if err != nil {
 		return fmt.Errorf("push screenshots: %w", err)
 	}
@@ -85,7 +85,7 @@ func run(prNumber int, filePaths []string, title string) error {
 	if err != nil {
 		return fmt.Errorf("create comment client: %w", err)
 	}
-	commentURL, err := commentClient.UpsertComment(repo, prNumber, paths, title)
+	commentURL, err := commentClient.UpsertComment(repo, prNumber, paths, commitSHA, title)
 	if err != nil {
 		return fmt.Errorf("upsert comment: %w", err)
 	}

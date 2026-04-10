@@ -9,12 +9,60 @@ import (
 	"github.com/enthus-appdev/gh-attach/internal/gh"
 )
 
+// gitDataClient is the subset of gh.GitDataClient that runUpload needs.
+// Defined as an interface here so tests can swap in a fake client that
+// returns canned results without making HTTP calls.
+type gitDataClient interface {
+	PushAttachments(repo *gh.Repo, refPath, commitMessage string, files []string) ([]gh.AttachmentPath, string, error)
+}
+
+// commentClient is the subset of gh.CommentClient that runUpload needs.
+type commentClient interface {
+	UpsertComment(repo *gh.Repo, prNumber int, paths []gh.AttachmentPath, commitSHA, title string) (string, error)
+}
+
+// runDeps bundles every external dependency that runUpload calls into
+// so tests can replace them with in-process fakes. Production code uses
+// defaultDeps(); tests build their own runDeps with stubs.
+type runDeps struct {
+	resolveRepo  func(override string) (*gh.Repo, error)
+	resolvePR    func(repo *gh.Repo) (int, error)
+	newGitClient func() (gitDataClient, error)
+	newCmtClient func() (commentClient, error)
+	expandFiles  func(patterns []string) ([]string, error)
+}
+
+// defaultDeps returns the real production dependencies — the thin
+// wrappers around internal/gh and expandFiles. Tests never call this;
+// they construct runDeps with fakes directly.
+func defaultDeps() runDeps {
+	return runDeps{
+		resolveRepo: gh.ResolveRepo,
+		resolvePR:   gh.ResolvePR,
+		newGitClient: func() (gitDataClient, error) {
+			return gh.NewGitDataClient()
+		},
+		newCmtClient: func() (commentClient, error) {
+			return gh.NewCommentClient()
+		},
+		expandFiles: expandFiles,
+	}
+}
+
 // Run parses args, runs the upload flow, and returns the process exit
 // code. stdout receives the rendered markdown (the primary composable
 // output); stderr receives progress messages, the directly-embeddable
 // URL list, and any error details. This is the function the command
-// entry point calls, and the function test code exercises.
+// entry point calls; production code always goes through defaultDeps.
 func Run(args []string, stdout, stderr io.Writer) int {
+	return runWithDeps(args, stdout, stderr, defaultDeps())
+}
+
+// runWithDeps is the testable core of Run: it accepts the dependency
+// struct so unit tests can inject fakes for the repo/PR resolvers, the
+// git data client, the comment client, and the file expander. Run()
+// calls it with defaultDeps() for real production runs.
+func runWithDeps(args []string, stdout, stderr io.Writer, deps runDeps) int {
 	fs := flag.NewFlagSet("gh-attach", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 
@@ -56,16 +104,17 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	if err := runUpload(number, filePaths, *title, *postComment, *repoOverride, *key, stdout, stderr); err != nil {
-		_, _ = fmt.Fprintf(stderr,"error: %v\n", err)
+	if err := runUpload(number, filePaths, *title, *postComment, *repoOverride, *key, stdout, stderr, deps); err != nil {
+		_, _ = fmt.Fprintf(stderr, "error: %v\n", err)
 		return 1
 	}
 	return 0
 }
 
 // runUpload holds the post-flag-parse orchestration. It's split out
-// from Run so tests can exercise it with already-parsed flag values.
-func runUpload(number int, filePaths []string, title string, postComment bool, repoOverride, key string, stdout, stderr io.Writer) error {
+// from Run so tests can exercise it with already-parsed flag values
+// and injected fake dependencies.
+func runUpload(number int, filePaths []string, title string, postComment bool, repoOverride, key string, stdout, stderr io.Writer, deps runDeps) error {
 	// Argument conflicts — fail fast before any network work.
 	if number != 0 && key != "" {
 		return fmt.Errorf("cannot combine NUMBER with --key — they target different ref namespaces")
@@ -80,7 +129,7 @@ func runUpload(number int, filePaths []string, title string, postComment bool, r
 	}
 
 	// Resolve repo context
-	repo, err := gh.ResolveRepo(repoOverride)
+	repo, err := deps.resolveRepo(repoOverride)
 	if err != nil {
 		return fmt.Errorf("resolve repo: %w", err)
 	}
@@ -97,14 +146,14 @@ func runUpload(number int, filePaths []string, title string, postComment bool, r
 	// Auto-detection only covers PRs (via `gh pr view`); to target an
 	// issue, pass its number explicitly. Skipped entirely in key mode.
 	if number == 0 && key == "" {
-		number, err = gh.ResolvePR(repo)
+		number, err = deps.resolvePR(repo)
 		if err != nil {
 			return fmt.Errorf("resolve PR: %w", err)
 		}
 	}
 
 	// Expand globs and validate files exist
-	files, err := expandFiles(filePaths)
+	files, err := deps.expandFiles(filePaths)
 	if err != nil {
 		return err
 	}
@@ -123,10 +172,10 @@ func runUpload(number int, filePaths []string, title string, postComment bool, r
 		target = fmt.Sprintf("#%d", number)
 	}
 
-	_, _ = fmt.Fprintf(stderr,"Uploading %d file(s) to %s in %s/%s...\n", len(files), target, repo.Owner, repo.Name)
+	_, _ = fmt.Fprintf(stderr, "Uploading %d file(s) to %s in %s/%s...\n", len(files), target, repo.Owner, repo.Name)
 
 	// Push images to refs/<refPath> via Git Data API
-	client, err := gh.NewGitDataClient()
+	client, err := deps.newGitClient()
 	if err != nil {
 		return fmt.Errorf("create git client: %w", err)
 	}
@@ -142,22 +191,22 @@ func runUpload(number int, filePaths []string, title string, postComment bool, r
 
 	// Always emit the raw, directly-embeddable URLs to stderr so the user
 	// sees actionable references in their terminal even when stdout is piped.
-	_, _ = fmt.Fprintln(stderr,"Uploaded:")
+	_, _ = fmt.Fprintln(stderr, "Uploaded:")
 	for _, p := range paths {
-		_, _ = fmt.Fprintf(stderr,"  https://github.com/%s/%s/blob/%s/%s?raw=true\n", repo.Owner, repo.Name, commitSHA, p.Path)
+		_, _ = fmt.Fprintf(stderr, "  https://github.com/%s/%s/blob/%s/%s?raw=true\n", repo.Owner, repo.Name, commitSHA, p.Path)
 	}
 
 	// Opt-in side-effect: also post/upsert the markdown as a PR/issue comment.
 	if postComment {
-		commentClient, err := gh.NewCommentClient()
+		cc, err := deps.newCmtClient()
 		if err != nil {
 			return fmt.Errorf("create comment client: %w", err)
 		}
-		commentURL, err := commentClient.UpsertComment(repo, number, paths, commitSHA, title)
+		commentURL, err := cc.UpsertComment(repo, number, paths, commitSHA, title)
 		if err != nil {
 			return fmt.Errorf("upsert comment: %w", err)
 		}
-		_, _ = fmt.Fprintf(stderr,"Commented: %s\n", commentURL)
+		_, _ = fmt.Fprintf(stderr, "Commented: %s\n", commentURL)
 	}
 
 	return nil

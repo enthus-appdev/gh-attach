@@ -1,0 +1,35 @@
+# Deletes the gh-pr-screenshot upload ref (refs/uploads/issues/<N>) when the
+# matching PR or issue is closed, freeing the orphan commits and blobs for
+# GitHub's next garbage-collection run.
+#
+# To install in another repo: copy this file unchanged to
+# .github/workflows/cleanup-pr-screenshots.yml in your repo. No customization
+# is required — github.repository and the event payload provide everything.
+name: Cleanup gh-pr-screenshot upload refs
+
+on:
+  pull_request:
+    types: [closed]
+  issues:
+    types: [closed]
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete upload ref if it exists
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          NUMBER: ${{ github.event.number || github.event.issue.number }}
+        run: |
+          set -euo pipefail
+          if gh api "repos/$REPO/git/refs/uploads/issues/$NUMBER" >/dev/null 2>&1; then
+            gh api -X DELETE "repos/$REPO/git/refs/uploads/issues/$NUMBER"
+            echo "Deleted refs/uploads/issues/$NUMBER for #$NUMBER"
+          else
+            echo "No upload ref for #$NUMBER — nothing to clean up"
+          fi

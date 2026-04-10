@@ -87,16 +87,23 @@ func TestValidateKey(t *testing.T) {
 		{name: "pure numeric", key: "123", wantErr: true, errSubstr: "purely numeric"},
 		{name: "single digit", key: "1", wantErr: true, errSubstr: "purely numeric"},
 
-		// --- Rejected: leading character rules ---
-		{name: "leading dot (hidden)", key: ".hidden", wantErr: true, errSubstr: "invalid"},
-		{name: "leading dash", key: "-foo", wantErr: true, errSubstr: "invalid"},
-		{name: "leading slash", key: "/foo", wantErr: true, errSubstr: "invalid"},
+		// --- Rejected: leading character rules (whole-key level) ---
+		{name: "leading dot (hidden)", key: ".hidden", wantErr: true, errSubstr: "start with '.'"},
+		{name: "leading dash", key: "-foo", wantErr: true, errSubstr: "start with '-'"},
+		{name: "leading slash", key: "/foo", wantErr: true, errSubstr: "start with '/'"},
 
-		// --- Rejected: git ref name rules ---
+		// --- Rejected: git ref name rules (whole-key level) ---
 		{name: "contains ..", key: "foo..bar", wantErr: true, errSubstr: ".."},
 		{name: "contains //", key: "foo//bar", wantErr: true, errSubstr: "//"},
 		{name: "trailing slash", key: "foo/", wantErr: true, errSubstr: "end with '/'"},
-		{name: "ends with .lock", key: "design.lock", wantErr: true, errSubstr: ".lock"},
+		{name: "trailing dot", key: "design.", wantErr: true, errSubstr: "end with '.'"},
+		{name: "ends with .lock (final segment)", key: "design.lock", wantErr: true, errSubstr: ".lock"},
+
+		// --- Rejected: git ref name rules (per-segment) ---
+		{name: "segment starts with dot", key: "foo/.bar", wantErr: true, errSubstr: "start with '.'"},
+		{name: "segment starts with dash", key: "foo/-bar", wantErr: true, errSubstr: "start with '-'"},
+		{name: "internal .lock segment", key: "foo.lock/bar", wantErr: true, errSubstr: ".lock"},
+		{name: "hidden subpath", key: "docs/.git", wantErr: true, errSubstr: "start with '.'"},
 
 		// --- Rejected: charset violations ---
 		{name: "contains space", key: "foo bar", wantErr: true, errSubstr: "invalid"},

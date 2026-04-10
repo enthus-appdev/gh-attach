@@ -69,10 +69,11 @@ func resolveRepo(override string) (*Repo, error) {
 	return parseRepoFromRemote(strings.TrimSpace(string(out)))
 }
 
-// keyCharset is the set of characters allowed in an ad-hoc --key value.
-// It is a safe subset of git's ref-name rules: alphanumerics, underscore,
-// dash, dot, and forward slash for hierarchical keys like "docs/arch".
-var keyCharset = regexp.MustCompile(`^[a-zA-Z0-9_][a-zA-Z0-9._/-]*$`)
+// keyCharset is the set of characters allowed anywhere in an ad-hoc --key
+// value. Segment-level rules (leading character, .lock suffix, etc.) are
+// enforced separately in validateKey because git's ref name rules apply to
+// each `/`-separated component, not just the whole string.
+var keyCharset = regexp.MustCompile(`^[a-zA-Z0-9._/-]+$`)
 
 // keyPureNumeric matches keys that are only digits. These are rejected
 // because they would be visually confusable with PR/issue numbers stored
@@ -80,8 +81,10 @@ var keyCharset = regexp.MustCompile(`^[a-zA-Z0-9_][a-zA-Z0-9._/-]*$`)
 var keyPureNumeric = regexp.MustCompile(`^[0-9]+$`)
 
 // validateKey returns an error if key is not a legal --key value. It
-// enforces a strict safe subset of git ref name rules so that every
-// accepted key can be used as-is in refs/uploads/misc/<key>.
+// enforces a strict safe subset of git's ref name rules so that every
+// accepted key can be used as-is in refs/uploads/misc/<key>. Git's rules
+// apply per path component (each `/`-separated segment), so segment-level
+// checks run after the whole-string checks.
 func validateKey(key string) error {
 	if key == "" {
 		return fmt.Errorf("--key cannot be empty")
@@ -93,7 +96,7 @@ func validateKey(key string) error {
 		return fmt.Errorf("--key cannot be purely numeric (confusable with a PR/issue number — try a descriptive name like %q)", "k"+key)
 	}
 	if !keyCharset.MatchString(key) {
-		return fmt.Errorf("--key %q contains invalid characters (allowed: letters, digits, '.', '_', '-', '/'; must start with a letter, digit, or underscore)", key)
+		return fmt.Errorf("--key %q contains invalid characters (allowed: letters, digits, '.', '_', '-', '/')", key)
 	}
 	if strings.Contains(key, "..") {
 		return fmt.Errorf("--key cannot contain '..' (git ref name rule)")
@@ -101,11 +104,28 @@ func validateKey(key string) error {
 	if strings.Contains(key, "//") {
 		return fmt.Errorf("--key cannot contain '//'")
 	}
+	if strings.HasPrefix(key, "/") {
+		return fmt.Errorf("--key cannot start with '/'")
+	}
 	if strings.HasSuffix(key, "/") {
 		return fmt.Errorf("--key cannot end with '/'")
 	}
-	if strings.HasSuffix(key, ".lock") {
-		return fmt.Errorf("--key cannot end with '.lock' (git ref name rule)")
+	if strings.HasSuffix(key, ".") {
+		return fmt.Errorf("--key cannot end with '.' (git ref name rule)")
+	}
+	// Per-segment rules — git ref components cannot start with '.' or '-'
+	// and cannot end with '.lock', and the rules apply to every component,
+	// not just the last one.
+	for _, seg := range strings.Split(key, "/") {
+		if strings.HasPrefix(seg, ".") {
+			return fmt.Errorf("--key segment %q cannot start with '.' (git ref name rule)", seg)
+		}
+		if strings.HasPrefix(seg, "-") {
+			return fmt.Errorf("--key segment %q cannot start with '-'", seg)
+		}
+		if strings.HasSuffix(seg, ".lock") {
+			return fmt.Errorf("--key segment %q cannot end with '.lock' (git ref name rule)", seg)
+		}
 	}
 	return nil
 }

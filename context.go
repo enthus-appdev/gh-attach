@@ -50,8 +50,13 @@ func parseOwnerRepo(path string) (*Repo, error) {
 func resolveRepo(override string) (*Repo, error) {
 	if override != "" {
 		// Accept full SSH/HTTPS URLs as a convenience — users often have a
-		// URL from a browser address bar or `git clone` command handy.
-		if strings.HasPrefix(override, "git@") || strings.Contains(override, "github.com") {
+		// URL from a browser address bar or `git clone` command handy. Use
+		// prefix checks (not `Contains(..., "github.com")`) so valid plain
+		// slugs like `foo/github.com-bar` aren't mis-routed as URLs.
+		if strings.HasPrefix(override, "git@") ||
+			strings.HasPrefix(override, "http://") ||
+			strings.HasPrefix(override, "https://") ||
+			strings.HasPrefix(override, "github.com/") {
 			return parseRepoFromRemote(override)
 		}
 		return parseOwnerRepo(override)

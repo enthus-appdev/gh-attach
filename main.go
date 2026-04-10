@@ -18,7 +18,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Usage:\n")
 		fmt.Fprintf(os.Stderr, "  gh attach [flags] [NUMBER] FILE...\n\n")
 		fmt.Fprintf(os.Stderr, "If NUMBER is omitted, it is auto-detected as a PR from the current branch.\n")
-		fmt.Fprintf(os.Stderr, "NUMBER is required when --repo points at a different repository.\n\n")
+		fmt.Fprintf(os.Stderr, "NUMBER must be passed explicitly whenever --repo is used.\n\n")
 		fmt.Fprintf(os.Stderr, "By default, the rendered markdown is written to stdout and no comment is\n")
 		fmt.Fprintf(os.Stderr, "posted. Pass --comment to also upsert the markdown as a PR/issue comment.\n\n")
 		fmt.Fprintf(os.Stderr, "Flags:\n")
@@ -60,10 +60,11 @@ func run(number int, filePaths []string, title string, postComment bool, repoOve
 		return fmt.Errorf("resolve repo: %w", err)
 	}
 
-	// PR auto-detection calls `gh pr view` against the current branch, which
-	// only makes sense inside a clone of the target repo. When --repo is used
-	// to target a different repository, require the number explicitly to
-	// avoid silently uploading to the wrong PR.
+	// PR auto-detection uses `gh pr view` on the current branch, which
+	// only makes sense inside a clone of the target repo. Any use of
+	// --repo means the caller is being explicit about the target, so
+	// require NUMBER explicitly too — we don't try to detect whether
+	// the override happens to match the current clone.
 	if number == 0 && repoOverride != "" {
 		return fmt.Errorf("--repo requires an explicit NUMBER (PR auto-detection only works inside a clone of the target repo)")
 	}

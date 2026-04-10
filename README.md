@@ -38,7 +38,7 @@ gh attach --repo enthus-appdev/gh-attach 123 screenshot.png
 gh attach --repo https://github.com/enthus-appdev/gh-attach 123 screenshot.png
 ```
 
-By default `gh attach` reads the target repo from the current clone's `origin` remote. Pass `--repo OWNER/NAME` (or a full GitHub URL) to target a different repo or to run from outside any git clone. NUMBER must be passed explicitly in that case — PR auto-detection only works inside a clone of the target repo.
+By default `gh attach` reads the target repo from the current clone's `origin` remote. Pass `--repo OWNER/NAME` (or a full GitHub URL) to target a different repo or to run from outside any git clone. Whenever `--repo` is used, NUMBER must be passed explicitly — PR auto-detection only works inside a clone of the target repo.
 
 ### Composing with other tools
 

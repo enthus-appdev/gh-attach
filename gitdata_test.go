@@ -22,23 +22,23 @@ func TestPushAttachmentsCreatesBlob(t *testing.T) {
 
 	mux.HandleFunc("POST /repos/owner/repo/git/blobs", func(w http.ResponseWriter, r *http.Request) {
 		calls = append(calls, "POST blob")
-		json.NewEncoder(w).Encode(map[string]string{"sha": "blob-sha-1"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"sha": "blob-sha-1"})
 	})
 
 	mux.HandleFunc("POST /repos/owner/repo/git/trees", func(w http.ResponseWriter, r *http.Request) {
 		calls = append(calls, "POST tree")
-		json.NewEncoder(w).Encode(map[string]string{"sha": "tree-sha-1"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"sha": "tree-sha-1"})
 	})
 
 	mux.HandleFunc("POST /repos/owner/repo/git/commits", func(w http.ResponseWriter, r *http.Request) {
 		calls = append(calls, "POST commit")
-		json.NewEncoder(w).Encode(map[string]string{"sha": "commit-sha-1"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"sha": "commit-sha-1"})
 	})
 
 	mux.HandleFunc("POST /repos/owner/repo/git/refs", func(w http.ResponseWriter, r *http.Request) {
 		calls = append(calls, "POST ref")
 		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(map[string]string{"ref": "refs/uploads/issues/42"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"ref": "refs/uploads/issues/42"})
 	})
 
 	srv := httptest.NewServer(mux)
@@ -46,7 +46,9 @@ func TestPushAttachmentsCreatesBlob(t *testing.T) {
 
 	tmpDir := t.TempDir()
 	testFile := filepath.Join(tmpDir, "test.png")
-	os.WriteFile(testFile, []byte("fake-png-data"), 0644)
+	if err := os.WriteFile(testFile, []byte("fake-png-data"), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	repo := &Repo{Owner: "owner", Name: "repo"}
 	client := &GitDataClient{BaseURL: srv.URL, Token: "test-token"}
@@ -84,41 +86,41 @@ func TestPushAttachmentsAppendsToExistingRef(t *testing.T) {
 
 	mux.HandleFunc("GET /repos/owner/repo/git/ref/uploads/issues/42", func(w http.ResponseWriter, r *http.Request) {
 		calls = append(calls, "GET ref")
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"object": map[string]string{"sha": "existing-commit-sha"},
 		})
 	})
 
 	mux.HandleFunc("GET /repos/owner/repo/git/commits/existing-commit-sha", func(w http.ResponseWriter, r *http.Request) {
 		calls = append(calls, "GET commit")
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"tree": map[string]string{"sha": "existing-tree-sha"},
 		})
 	})
 
 	mux.HandleFunc("POST /repos/owner/repo/git/blobs", func(w http.ResponseWriter, r *http.Request) {
 		calls = append(calls, "POST blob")
-		json.NewEncoder(w).Encode(map[string]string{"sha": "blob-sha-1"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"sha": "blob-sha-1"})
 	})
 
 	mux.HandleFunc("POST /repos/owner/repo/git/trees", func(w http.ResponseWriter, r *http.Request) {
 		calls = append(calls, "POST tree")
 		var body map[string]interface{}
-		json.NewDecoder(r.Body).Decode(&body)
+		_ = json.NewDecoder(r.Body).Decode(&body)
 		if body["base_tree"] != "existing-tree-sha" {
 			t.Errorf("base_tree = %v, want %q", body["base_tree"], "existing-tree-sha")
 		}
-		json.NewEncoder(w).Encode(map[string]string{"sha": "new-tree-sha"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"sha": "new-tree-sha"})
 	})
 
 	mux.HandleFunc("POST /repos/owner/repo/git/commits", func(w http.ResponseWriter, r *http.Request) {
 		calls = append(calls, "POST commit")
-		json.NewEncoder(w).Encode(map[string]string{"sha": "new-commit-sha"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"sha": "new-commit-sha"})
 	})
 
 	mux.HandleFunc("PATCH /repos/owner/repo/git/refs/uploads/issues/42", func(w http.ResponseWriter, r *http.Request) {
 		calls = append(calls, "PATCH ref")
-		json.NewEncoder(w).Encode(map[string]string{"ref": "refs/uploads/issues/42"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"ref": "refs/uploads/issues/42"})
 	})
 
 	srv := httptest.NewServer(mux)
@@ -126,7 +128,9 @@ func TestPushAttachmentsAppendsToExistingRef(t *testing.T) {
 
 	tmpDir := t.TempDir()
 	testFile := filepath.Join(tmpDir, "test.png")
-	os.WriteFile(testFile, []byte("fake-png-data"), 0644)
+	if err := os.WriteFile(testFile, []byte("fake-png-data"), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	repo := &Repo{Owner: "owner", Name: "repo"}
 	client := &GitDataClient{BaseURL: srv.URL, Token: "test-token"}
@@ -167,28 +171,28 @@ func TestPushAttachmentsUsesMiscRefPath(t *testing.T) {
 	})
 
 	mux.HandleFunc("POST /repos/owner/repo/git/blobs", func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]string{"sha": "blob-sha"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"sha": "blob-sha"})
 	})
 
 	mux.HandleFunc("POST /repos/owner/repo/git/trees", func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]string{"sha": "tree-sha"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"sha": "tree-sha"})
 	})
 
 	mux.HandleFunc("POST /repos/owner/repo/git/commits", func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]interface{}
-		json.NewDecoder(r.Body).Decode(&body)
+		_ = json.NewDecoder(r.Body).Decode(&body)
 		if msg, ok := body["message"].(string); ok {
 			postedCommitMessage = msg
 		}
-		json.NewEncoder(w).Encode(map[string]string{"sha": "commit-sha"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"sha": "commit-sha"})
 	})
 
 	mux.HandleFunc("POST /repos/owner/repo/git/refs", func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]string
-		json.NewDecoder(r.Body).Decode(&body)
+		_ = json.NewDecoder(r.Body).Decode(&body)
 		postedRef = body["ref"]
 		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(map[string]string{"ref": body["ref"]})
+		_ = json.NewEncoder(w).Encode(map[string]string{"ref": body["ref"]})
 	})
 
 	srv := httptest.NewServer(mux)
@@ -196,7 +200,9 @@ func TestPushAttachmentsUsesMiscRefPath(t *testing.T) {
 
 	tmpDir := t.TempDir()
 	testFile := filepath.Join(tmpDir, "mockup.png")
-	os.WriteFile(testFile, []byte("fake-png-data"), 0644)
+	if err := os.WriteFile(testFile, []byte("fake-png-data"), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	repo := &Repo{Owner: "owner", Name: "repo"}
 	client := &GitDataClient{BaseURL: srv.URL, Token: "test-token"}

@@ -132,7 +132,7 @@ func run(number int, filePaths []string, title string, postComment bool, repoOve
 	// Always emit the rendered markdown to stdout so the caller can embed
 	// it anywhere — PR body, Slack, issue template, pbcopy, etc.
 	markdown := strings.TrimSpace(formatSection(repo, paths, commitSHA, title))
-	fmt.Fprintln(os.Stdout, markdown)
+	_, _ = fmt.Fprintln(os.Stdout, markdown)
 
 	// Always emit the raw, directly-embeddable URLs to stderr so the user
 	// sees actionable references in their terminal even when stdout is piped.

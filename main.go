@@ -12,11 +12,13 @@ import (
 func main() {
 	title := flag.String("title", "", "Label for the upload group")
 	postComment := flag.Bool("comment", false, "Also post (or upsert) the markdown as a PR/issue comment")
+	repoOverride := flag.String("repo", "", "Target repo as OWNER/NAME or a GitHub URL (default: origin of the current clone)")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Upload images to a GitHub PR or issue and print embeddable markdown to stdout.\n\n")
 		fmt.Fprintf(os.Stderr, "Usage:\n")
 		fmt.Fprintf(os.Stderr, "  gh attach [flags] [NUMBER] FILE...\n\n")
-		fmt.Fprintf(os.Stderr, "If NUMBER is omitted, it is auto-detected as a PR from the current branch.\n\n")
+		fmt.Fprintf(os.Stderr, "If NUMBER is omitted, it is auto-detected as a PR from the current branch.\n")
+		fmt.Fprintf(os.Stderr, "NUMBER is required when --repo points at a different repository.\n\n")
 		fmt.Fprintf(os.Stderr, "By default, the rendered markdown is written to stdout and no comment is\n")
 		fmt.Fprintf(os.Stderr, "posted. Pass --comment to also upsert the markdown as a PR/issue comment.\n\n")
 		fmt.Fprintf(os.Stderr, "Flags:\n")
@@ -37,7 +39,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := run(number, files, *title, *postComment); err != nil {
+	if err := run(number, files, *title, *postComment, *repoOverride); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
@@ -51,11 +53,19 @@ func parseArgs(args []string) (int, []string) {
 	return 0, args
 }
 
-func run(number int, filePaths []string, title string, postComment bool) error {
+func run(number int, filePaths []string, title string, postComment bool, repoOverride string) error {
 	// Resolve repo context
-	repo, err := resolveRepo()
+	repo, err := resolveRepo(repoOverride)
 	if err != nil {
 		return fmt.Errorf("resolve repo: %w", err)
+	}
+
+	// PR auto-detection calls `gh pr view` against the current branch, which
+	// only makes sense inside a clone of the target repo. When --repo is used
+	// to target a different repository, require the number explicitly to
+	// avoid silently uploading to the wrong PR.
+	if number == 0 && repoOverride != "" {
+		return fmt.Errorf("--repo requires an explicit NUMBER (PR auto-detection only works inside a clone of the target repo)")
 	}
 
 	// Resolve number from the current branch's PR if not provided.

@@ -43,8 +43,19 @@ func parseOwnerRepo(path string) (*Repo, error) {
 	return &Repo{Owner: parts[0], Name: parts[1]}, nil
 }
 
-// resolveRepo detects the GitHub repo from the current git remote.
-func resolveRepo() (*Repo, error) {
+// resolveRepo returns the target GitHub repo. If override is non-empty, it
+// is parsed as either "owner/name" or a full SSH/HTTPS GitHub URL and used
+// directly. Otherwise, the repo is detected from the current git clone's
+// origin remote.
+func resolveRepo(override string) (*Repo, error) {
+	if override != "" {
+		// Accept full SSH/HTTPS URLs as a convenience — users often have a
+		// URL from a browser address bar or `git clone` command handy.
+		if strings.HasPrefix(override, "git@") || strings.Contains(override, "github.com") {
+			return parseRepoFromRemote(override)
+		}
+		return parseOwnerRepo(override)
+	}
 	out, err := exec.Command("git", "remote", "get-url", "origin").Output()
 	if err != nil {
 		return nil, fmt.Errorf("git remote get-url origin: %w", err)

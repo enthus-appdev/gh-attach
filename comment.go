@@ -10,11 +10,7 @@ import (
 )
 
 // commentMarker identifies the gh-attach upsert comment on a PR/issue.
-// The literal string is intentionally kept as "pr-screenshots" (the original
-// project name) so that previously-posted comments in user repos can still
-// be found and updated by newer versions of the tool. Renaming this constant
-// would silently break upsert continuity for any existing user.
-const commentMarker = "<!-- pr-screenshots -->"
+const commentMarker = "<!-- gh-attach -->"
 
 // CommentClient interacts with the GitHub Issues API for PR comments.
 type CommentClient struct {
@@ -37,15 +33,8 @@ func NewCommentClient() (*CommentClient, error) {
 // formatComment builds the full markdown body for an attachment comment.
 // It is the marker + heading prefix followed by a single section, and is
 // only used when no existing comment is being upserted.
-//
-// The "### Screenshots" heading literal is intentionally kept (the project
-// renamed to gh-attach but the heading stays for the same backward-compat
-// reason as commentMarker: existing PR comments would otherwise show a mix
-// of "### Screenshots" and "### Attachments" headers as new sections are
-// appended via UpsertComment, which is uglier than just keeping the legacy
-// label. "Screenshots" still describes the most common use case in practice.
 func formatComment(repo *Repo, paths []AttachmentPath, commitSHA, title string) string {
-	return commentMarker + "\n### Screenshots\n" + formatSection(repo, paths, commitSHA, title)
+	return commentMarker + "\n### Attachments\n" + formatSection(repo, paths, commitSHA, title)
 }
 
 // formatSection builds just the new section (without marker/header) for appending.

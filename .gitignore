@@ -2,11 +2,5 @@
 /gh-attach
 /gh-attach.exe
 
-# Pre-rename binary name — kept ignored so existing workspaces don't accidentally
-# re-track the residual file from the gh-pr-screenshot era. Safe to drop after a
-# few months once everyone's workspace has cleaned up.
-/gh-pr-screenshot
-/gh-pr-screenshot.exe
-
 # GoReleaser output
 /dist/

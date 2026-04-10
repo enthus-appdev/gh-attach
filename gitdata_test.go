@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -146,5 +147,44 @@ func TestPushScreenshotsAppendsToExistingBranch(t *testing.T) {
 		if c != expectedCalls[i] {
 			t.Errorf("call[%d] = %q, want %q", i, c, expectedCalls[i])
 		}
+	}
+}
+
+// TestPushScreenshotsRejectsBasenameCollision asserts the pre-flight check
+// that two source files with the same basename in a single upload are
+// rejected before any GitHub API calls. Without this check, the second
+// file would silently overwrite the first in the tree.
+func TestPushScreenshotsRejectsBasenameCollision(t *testing.T) {
+	tmpDir := t.TempDir()
+	dir1 := filepath.Join(tmpDir, "a")
+	dir2 := filepath.Join(tmpDir, "b")
+	if err := os.MkdirAll(dir1, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(dir2, 0755); err != nil {
+		t.Fatal(err)
+	}
+	file1 := filepath.Join(dir1, "img.png")
+	file2 := filepath.Join(dir2, "img.png")
+	if err := os.WriteFile(file1, []byte("data1"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(file2, []byte("data2"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Use an unreachable BaseURL — if the collision check works, no HTTP call should be made.
+	repo := &Repo{Owner: "owner", Name: "repo"}
+	client := &GitDataClient{BaseURL: "http://127.0.0.1:1", Token: "test-token"}
+
+	_, _, err := client.PushScreenshots(repo, 42, []string{file1, file2})
+	if err == nil {
+		t.Fatal("expected error for basename collision, got nil")
+	}
+	if !strings.Contains(err.Error(), "duplicate basename") {
+		t.Errorf("error = %q, want substring %q", err.Error(), "duplicate basename")
+	}
+	if !strings.Contains(err.Error(), "img.png") {
+		t.Errorf("error = %q, want it to mention the colliding basename", err.Error())
 	}
 }

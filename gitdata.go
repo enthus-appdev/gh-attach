@@ -47,6 +47,17 @@ func (c *GitDataClient) PushScreenshots(repo *Repo, prNumber int, files []string
 	prefix := fmt.Sprintf("repos/%s/%s", repo.Owner, repo.Name)
 	refSuffix := fmt.Sprintf("uploads/issues/%d", prNumber) // path under refs/
 
+	// 0. Reject basename collisions before any API calls. Tree paths are basenames,
+	// so two source files with the same basename would silently overwrite each other.
+	seenBasename := make(map[string]string, len(files))
+	for _, f := range files {
+		base := filepath.Base(f)
+		if other, exists := seenBasename[base]; exists {
+			return nil, "", fmt.Errorf("duplicate basename %q: %s and %s would collide in the same upload — rename one of the files", base, other, f)
+		}
+		seenBasename[base] = f
+	}
+
 	// 1. Check if our upload ref already exists for this PR/issue
 	parentCommitSHA := ""
 	baseTreeSHA := ""

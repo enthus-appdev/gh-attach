@@ -14,19 +14,19 @@ gh extension install enthus-appdev/gh-attach
 
 ```bash
 # Upload to a specific PR
-gh attach 123 screenshot.png
+gh attach 123 mockup.png
 
 # Multiple files
 gh attach 123 before.png after.png
 
 # Glob pattern
-gh attach 123 ./screenshots/*.png
+gh attach 123 ./images/*.png
 
 # Auto-detect PR from current branch
 gh attach screenshot.png
 
 # Add a label (flags must come before PR number)
-gh attach --title "After fix" 123 screenshot.png
+gh attach --title "After fix" 123 diagram.png
 ```
 
 ## How it works

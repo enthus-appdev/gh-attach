@@ -37,6 +37,13 @@ func NewCommentClient() (*CommentClient, error) {
 // formatComment builds the full markdown body for an attachment comment.
 // It is the marker + heading prefix followed by a single section, and is
 // only used when no existing comment is being upserted.
+//
+// The "### Screenshots" heading literal is intentionally kept (the project
+// renamed to gh-attach but the heading stays for the same backward-compat
+// reason as commentMarker: existing PR comments would otherwise show a mix
+// of "### Screenshots" and "### Attachments" headers as new sections are
+// appended via UpsertComment, which is uglier than just keeping the legacy
+// label. "Screenshots" still describes the most common use case in practice.
 func formatComment(repo *Repo, paths []AttachmentPath, commitSHA, title string) string {
 	return commentMarker + "\n### Screenshots\n" + formatSection(repo, paths, commitSHA, title)
 }

@@ -9,11 +9,11 @@ import (
 )
 
 func main() {
-	title := flag.String("title", "", "Label for the screenshot group")
+	title := flag.String("title", "", "Label for the upload group")
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Upload screenshots to a GitHub PR.\n\n")
+		fmt.Fprintf(os.Stderr, "Upload images to a GitHub PR.\n\n")
 		fmt.Fprintf(os.Stderr, "Usage:\n")
-		fmt.Fprintf(os.Stderr, "  gh pr-screenshot [PR_NUMBER] [flags] FILE...\n\n")
+		fmt.Fprintf(os.Stderr, "  gh attach [PR_NUMBER] [flags] FILE...\n\n")
 		fmt.Fprintf(os.Stderr, "If PR_NUMBER is omitted, it is auto-detected from the current branch.\n\n")
 		fmt.Fprintf(os.Stderr, "Flags:\n")
 		flag.PrintDefaults()
@@ -75,9 +75,9 @@ func run(prNumber int, filePaths []string, title string) error {
 	if err != nil {
 		return fmt.Errorf("create git client: %w", err)
 	}
-	paths, commitSHA, err := client.PushScreenshots(repo, prNumber, files)
+	paths, commitSHA, err := client.PushAttachments(repo, prNumber, files)
 	if err != nil {
-		return fmt.Errorf("push screenshots: %w", err)
+		return fmt.Errorf("push attachments: %w", err)
 	}
 
 	// Post/update PR comment

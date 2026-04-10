@@ -13,10 +13,10 @@ import (
 	"strings"
 )
 
-// ScreenshotPath holds the tree-relative path of an uploaded screenshot.
+// AttachmentPath holds the tree-relative path of an uploaded attachment.
 // Stored under refs/uploads/issues/<N>, the tree contains files at top level
 // keyed by basename, so Path doubles as both the tree path and the display name.
-type ScreenshotPath struct {
+type AttachmentPath struct {
 	Path string // e.g. "screenshot.png"
 }
 
@@ -38,12 +38,12 @@ func NewGitDataClient() (*GitDataClient, error) {
 	}, nil
 }
 
-// PushScreenshots uploads files via the Git Data API to refs/uploads/issues/<N>,
+// PushAttachments uploads files via the Git Data API to refs/uploads/issues/<N>,
 // a custom-namespace ref that bypasses branch protection / rulesets and is invisible
 // in the Branches UI. Returns the per-upload basenames and the commit SHA they're
 // reachable from. Embed URLs reference the commit SHA directly so they remain valid
 // across subsequent uploads as long as the ref is not deleted.
-func (c *GitDataClient) PushScreenshots(repo *Repo, prNumber int, files []string) ([]ScreenshotPath, string, error) {
+func (c *GitDataClient) PushAttachments(repo *Repo, prNumber int, files []string) ([]AttachmentPath, string, error) {
 	prefix := fmt.Sprintf("repos/%s/%s", repo.Owner, repo.Name)
 	refSuffix := fmt.Sprintf("uploads/issues/%d", prNumber) // path under refs/
 
@@ -90,7 +90,7 @@ func (c *GitDataClient) PushScreenshots(repo *Repo, prNumber int, files []string
 		SHA  string `json:"sha"`
 	}
 	var entries []treeEntry
-	var paths []ScreenshotPath
+	var paths []AttachmentPath
 
 	for _, f := range files {
 		data, err := os.ReadFile(f)
@@ -116,7 +116,7 @@ func (c *GitDataClient) PushScreenshots(repo *Repo, prNumber int, files []string
 			Type: "blob",
 			SHA:  blobResp.SHA,
 		})
-		paths = append(paths, ScreenshotPath{Path: fileName})
+		paths = append(paths, AttachmentPath{Path: fileName})
 	}
 
 	// 3. Create tree (fast-forward by basing on the previous tree if it exists)
@@ -135,7 +135,7 @@ func (c *GitDataClient) PushScreenshots(repo *Repo, prNumber int, files []string
 
 	// 4. Create commit (fast-forward chain so older blobs stay reachable)
 	commitReq := map[string]interface{}{
-		"message": fmt.Sprintf("screenshots for #%d", prNumber),
+		"message": fmt.Sprintf("upload for #%d", prNumber),
 		"tree":    treeResp.SHA,
 	}
 	if parentCommitSHA != "" {

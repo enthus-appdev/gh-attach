@@ -9,6 +9,11 @@ import (
 	"strings"
 )
 
+// commentMarker identifies the gh-attach upsert comment on a PR/issue.
+// The literal string is intentionally kept as "pr-screenshots" (the original
+// project name) so that previously-posted comments in user repos can still
+// be found and updated by newer versions of the tool. Renaming this constant
+// would silently break upsert continuity for any existing user.
 const commentMarker = "<!-- pr-screenshots -->"
 
 // CommentClient interacts with the GitHub Issues API for PR comments.
@@ -29,15 +34,15 @@ func NewCommentClient() (*CommentClient, error) {
 	}, nil
 }
 
-// formatComment builds the full markdown body for a screenshot comment.
+// formatComment builds the full markdown body for an attachment comment.
 // It is the marker + heading prefix followed by a single section, and is
 // only used when no existing comment is being upserted.
-func formatComment(repo *Repo, paths []ScreenshotPath, commitSHA, title string) string {
+func formatComment(repo *Repo, paths []AttachmentPath, commitSHA, title string) string {
 	return commentMarker + "\n### Screenshots\n" + formatSection(repo, paths, commitSHA, title)
 }
 
 // formatSection builds just the new section (without marker/header) for appending.
-func formatSection(repo *Repo, paths []ScreenshotPath, commitSHA, title string) string {
+func formatSection(repo *Repo, paths []AttachmentPath, commitSHA, title string) string {
 	var b strings.Builder
 
 	if title != "" {
@@ -90,8 +95,8 @@ func formatSection(repo *Repo, paths []ScreenshotPath, commitSHA, title string) 
 	return b.String()
 }
 
-// UpsertComment creates or updates the screenshot comment on a PR.
-func (c *CommentClient) UpsertComment(repo *Repo, prNumber int, paths []ScreenshotPath, commitSHA, title string) (string, error) {
+// UpsertComment creates or updates the attachment comment on a PR.
+func (c *CommentClient) UpsertComment(repo *Repo, prNumber int, paths []AttachmentPath, commitSHA, title string) (string, error) {
 	prefix := fmt.Sprintf("repos/%s/%s", repo.Owner, repo.Name)
 
 	existingID, existingBody, existingURL, err := c.findMarkerComment(prefix, prNumber)

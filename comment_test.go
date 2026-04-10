@@ -11,7 +11,7 @@ import (
 func TestFormatComment(t *testing.T) {
 	t.Run("single image with title", func(t *testing.T) {
 		repo := &Repo{Owner: "enthus-appdev", Name: "negsoft-gui"}
-		paths := []ScreenshotPath{
+		paths := []AttachmentPath{
 			{Path: "screenshot.png"},
 		}
 		commitSHA := "1234567890abcdef1234567890abcdef12345678"
@@ -30,7 +30,7 @@ func TestFormatComment(t *testing.T) {
 
 	t.Run("multiple images without title", func(t *testing.T) {
 		repo := &Repo{Owner: "enthus-appdev", Name: "negsoft-gui"}
-		paths := []ScreenshotPath{
+		paths := []AttachmentPath{
 			{Path: "a.png"},
 			{Path: "b.png"},
 			{Path: "c.png"},
@@ -48,7 +48,7 @@ func TestFormatComment(t *testing.T) {
 
 	t.Run("single image no title", func(t *testing.T) {
 		repo := &Repo{Owner: "enthus-appdev", Name: "negsoft-gui"}
-		paths := []ScreenshotPath{
+		paths := []AttachmentPath{
 			{Path: "shot.png"},
 		}
 		commitSHA := "1234567890abcdef1234567890abcdef12345678"
@@ -89,7 +89,7 @@ func TestUpsertCommentCreatesNew(t *testing.T) {
 
 	client := &CommentClient{BaseURL: srv.URL, Token: "test-token"}
 	repo := &Repo{Owner: "owner", Name: "repo"}
-	paths := []ScreenshotPath{{Path: "test.png"}}
+	paths := []AttachmentPath{{Path: "test.png"}}
 	commitSHA := "deadbeefcafe1234567890abcdef1234567890ab"
 
 	url, err := client.UpsertComment(repo, 42, paths, commitSHA, "Test")
@@ -140,7 +140,7 @@ func TestUpsertCommentAppendsToExisting(t *testing.T) {
 
 	client := &CommentClient{BaseURL: srv.URL, Token: "test-token"}
 	repo := &Repo{Owner: "owner", Name: "repo"}
-	paths := []ScreenshotPath{{Path: "new.png"}}
+	paths := []AttachmentPath{{Path: "new.png"}}
 	commitSHA := "feed1234cafebabe1234567890abcdef12345678"
 
 	_, err := client.UpsertComment(repo, 42, paths, commitSHA, "New upload")

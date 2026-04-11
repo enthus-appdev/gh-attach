@@ -16,21 +16,21 @@ func TestParseRepoFromRemote(t *testing.T) {
 	}{
 		{
 			name:   "SSH URL",
-			remote: "git@github.com:enthus-appdev/negsoft-gui.git",
+			remote: "git@github.com:enthus-appdev/demo-repo.git",
 			owner:  "enthus-appdev",
-			repo:   "negsoft-gui",
+			repo:   "demo-repo",
 		},
 		{
 			name:   "HTTPS URL",
-			remote: "https://github.com/enthus-appdev/negsoft-gui.git",
+			remote: "https://github.com/enthus-appdev/demo-repo.git",
 			owner:  "enthus-appdev",
-			repo:   "negsoft-gui",
+			repo:   "demo-repo",
 		},
 		{
 			name:   "HTTPS URL without .git",
-			remote: "https://github.com/enthus-appdev/negsoft-gui",
+			remote: "https://github.com/enthus-appdev/demo-repo",
 			owner:  "enthus-appdev",
-			repo:   "negsoft-gui",
+			repo:   "demo-repo",
 		},
 		{
 			name:    "invalid URL",

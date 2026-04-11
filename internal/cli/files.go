@@ -40,9 +40,19 @@ func expandFiles(patterns []string) ([]string, error) {
 	return files, nil
 }
 
+// nameReservedChars is the set of characters validateName rejects.
+// Covers both Unix path separators (`/`) and the full Windows
+// reserved set (`<`, `>`, `:`, `"`, `\`, `|`, `?`, `*`) so the
+// resulting basename is legal on every common filesystem and won't
+// require per-platform escaping when embedded in URLs or git tree
+// entries. Reference:
+// https://learn.microsoft.com/en-us/windows/win32/fileio/naming-a-file#naming-conventions
+const nameReservedChars = `<>:"/\|?*`
+
 // validateName enforces that name is a safe basename to use when
 // materializing a stdin upload. It rejects empty strings, path
-// separators, `.` / `..`, NUL bytes, and anything longer than 255
+// separators, `.` / `..`, NUL bytes, any character reserved on
+// Windows (see nameReservedChars), and anything longer than 255
 // bytes. The goal is a value that (a) can't escape its temp dir via
 // filepath.Join, (b) is legal on every common filesystem, and (c)
 // survives being embedded in a git tree entry and a raw-blob URL
@@ -57,8 +67,8 @@ func validateName(name string) error {
 	if name == "." || name == ".." {
 		return fmt.Errorf("--name cannot be %q", name)
 	}
-	if strings.ContainsAny(name, `/\`) {
-		return fmt.Errorf("--name must be a basename, not a path (got %q)", name)
+	if strings.ContainsAny(name, nameReservedChars) {
+		return fmt.Errorf("--name must be a basename and contain only legal filesystem characters (got %q)", name)
 	}
 	if strings.ContainsRune(name, 0) {
 		return fmt.Errorf("--name cannot contain NUL bytes")

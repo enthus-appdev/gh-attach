@@ -78,6 +78,32 @@ type runDeps struct {
 	stdin        io.Reader
 }
 
+// uploadOptions bundles the parsed-flag state that runUpload consumes.
+// Keeping it as a struct (rather than a long positional signature)
+// makes the single caller in runWithDeps explicit about which parsed
+// value maps to which semantic field, and lets future flags be added
+// without touching every call site.
+//
+// Field semantics:
+//   - number: PR/issue number (0 when --key is used or auto-detected from branch)
+//   - filePaths: positional file args, or ["-"] to read from deps.stdin
+//   - title: --title label for the markdown section
+//   - postComment: --comment — also upsert the markdown as a PR/issue comment
+//   - repoOverride: --repo OWNER/NAME (default: origin of the current clone)
+//   - key: --key KEY — ad-hoc upload under refs/uploads/misc/KEY
+//   - name: --name BASENAME — basename to use when reading from stdin
+//   - asJSON: --json — emit uploadResult JSON instead of markdown
+type uploadOptions struct {
+	number       int
+	filePaths    []string
+	title        string
+	postComment  bool
+	repoOverride string
+	key          string
+	name         string
+	asJSON       bool
+}
+
 // defaultDeps returns the real production dependencies — the thin
 // wrappers around internal/gh, expandFiles, and os.Stdin. Tests never
 // call this; they construct runDeps with fakes directly.
@@ -179,7 +205,17 @@ func runWithDeps(args []string, stdout, stderr io.Writer, deps runDeps) int {
 		return 1
 	}
 
-	if err := runUpload(number, filePaths, *title, *postComment, *repoOverride, *key, *name, *asJSON, stdout, stderr, deps); err != nil {
+	opts := uploadOptions{
+		number:       number,
+		filePaths:    filePaths,
+		title:        *title,
+		postComment:  *postComment,
+		repoOverride: *repoOverride,
+		key:          *key,
+		name:         *name,
+		asJSON:       *asJSON,
+	}
+	if err := runUpload(opts, stdout, stderr, deps); err != nil {
 		_, _ = fmt.Fprintf(stderr, "error: %v\n", err)
 		return 1
 	}
@@ -200,16 +236,21 @@ func runWithDeps(args []string, stdout, stderr io.Writer, deps runDeps) int {
 // should break the operation into two steps: `gh attach ...` then
 // `gh pr comment` — a --comment failure here still exits 1 with no
 // JSON on stdout, by design.
-func runUpload(number int, filePaths []string, title string, postComment bool, repoOverride, key, name string, asJSON bool, stdout, stderr io.Writer, deps runDeps) error {
+func runUpload(opts uploadOptions, stdout, stderr io.Writer, deps runDeps) error {
+	// number is the only field we mutate locally (auto-detected from
+	// the current branch when the caller didn't pass one). Everything
+	// else is read-only and accessed via opts.X.
+	number := opts.number
+
 	// Argument conflicts — fail fast before any network work.
-	if number != 0 && key != "" {
+	if number != 0 && opts.key != "" {
 		return fmt.Errorf("cannot combine NUMBER with --key — they target different ref namespaces")
 	}
-	if key != "" && postComment {
+	if opts.key != "" && opts.postComment {
 		return fmt.Errorf("--comment requires a PR/issue number and is incompatible with --key")
 	}
-	if key != "" {
-		if err := gh.ValidateKey(key); err != nil {
+	if opts.key != "" {
+		if err := gh.ValidateKey(opts.key); err != nil {
 			return err
 		}
 	}
@@ -219,27 +260,27 @@ func runUpload(number int, filePaths []string, title string, postComment bool, r
 	// either a normal upload or a user error we want to flag
 	// explicitly (rather than letting expandFiles produce an opaque
 	// "no files matched" result).
-	useStdin := len(filePaths) == 1 && filePaths[0] == "-"
+	useStdin := len(opts.filePaths) == 1 && opts.filePaths[0] == "-"
 	if !useStdin {
-		for _, p := range filePaths {
+		for _, p := range opts.filePaths {
 			if p == "-" {
 				return fmt.Errorf("`-` must be the only file argument when reading from stdin")
 			}
 		}
-		if name != "" {
+		if opts.name != "" {
 			return fmt.Errorf("--name is only valid when reading from stdin (pass `-` as the file argument)")
 		}
 	} else {
-		if name == "" {
+		if opts.name == "" {
 			return fmt.Errorf("--name is required when reading from stdin (`-`)")
 		}
-		if err := validateName(name); err != nil {
+		if err := validateName(opts.name); err != nil {
 			return err
 		}
 	}
 
 	// Resolve repo context
-	repo, err := deps.resolveRepo(repoOverride)
+	repo, err := deps.resolveRepo(opts.repoOverride)
 	if err != nil {
 		return fmt.Errorf("resolve repo: %w", err)
 	}
@@ -248,14 +289,14 @@ func runUpload(number int, filePaths []string, title string, postComment bool, r
 	// only makes sense inside a clone of the target repo. Any use of
 	// --repo means the caller is being explicit about the target, so
 	// require NUMBER (or --key) explicitly too.
-	if number == 0 && key == "" && repoOverride != "" {
+	if number == 0 && opts.key == "" && opts.repoOverride != "" {
 		return fmt.Errorf("--repo requires an explicit NUMBER or --key (PR auto-detection only works inside a clone of the target repo)")
 	}
 
 	// Resolve number from the current branch's PR if not provided.
 	// Auto-detection only covers PRs (via `gh pr view`); to target an
 	// issue, pass its number explicitly. Skipped entirely in key mode.
-	if number == 0 && key == "" {
+	if number == 0 && opts.key == "" {
 		number, err = deps.resolvePR(repo)
 		if err != nil {
 			return fmt.Errorf("resolve PR: %w", err)
@@ -269,14 +310,14 @@ func runUpload(number int, filePaths []string, title string, postComment bool, r
 	// (it still receives a real filesystem path).
 	var files []string
 	if useStdin {
-		tmpPath, cleanup, stdinErr := materializeStdin(deps.stdin, name)
+		tmpPath, cleanup, stdinErr := materializeStdin(deps.stdin, opts.name)
 		if stdinErr != nil {
 			return stdinErr
 		}
 		defer cleanup()
 		files = []string{tmpPath}
 	} else {
-		files, err = deps.expandFiles(filePaths)
+		files, err = deps.expandFiles(opts.filePaths)
 		if err != nil {
 			return err
 		}
@@ -286,10 +327,10 @@ func runUpload(number int, filePaths []string, title string, postComment bool, r
 	// descriptor from the mode. gh.PushAttachments is namespace-agnostic
 	// — it takes whatever refPath it's given.
 	var refPath, commitMessage, target string
-	if key != "" {
-		refPath = "uploads/misc/" + key
-		commitMessage = "upload for misc/" + key
-		target = "misc/" + key
+	if opts.key != "" {
+		refPath = "uploads/misc/" + opts.key
+		commitMessage = "upload for misc/" + opts.key
+		target = "misc/" + opts.key
 	} else {
 		refPath = fmt.Sprintf("uploads/issues/%d", number)
 		commitMessage = fmt.Sprintf("upload for #%d", number)
@@ -297,7 +338,7 @@ func runUpload(number int, filePaths []string, title string, postComment bool, r
 	}
 
 	// Progress line (suppressed in JSON mode so stderr is quiet).
-	if !asJSON {
+	if !opts.asJSON {
 		_, _ = fmt.Fprintf(stderr, "Uploading %d file(s) to %s in %s...\n", len(files), target, repo)
 	}
 
@@ -314,24 +355,24 @@ func runUpload(number int, filePaths []string, title string, postComment bool, r
 	// Render the markdown once. It's used either directly as stdout
 	// output (non-JSON mode) or embedded as a field in the JSON
 	// result (--json mode).
-	markdown := strings.TrimSpace(gh.FormatSection(repo, paths, commitSHA, title))
+	markdown := strings.TrimSpace(gh.FormatSection(repo, paths, commitSHA, opts.title))
 
 	// Opt-in side-effect: also post/upsert the markdown as a PR/issue
 	// comment. Runs before the final stdout emit so the comment URL
 	// can be included in the JSON result when both flags are set.
 	var commentURL string
-	if postComment {
+	if opts.postComment {
 		cc, err := deps.newCmtClient()
 		if err != nil {
 			return fmt.Errorf("create comment client: %w", err)
 		}
-		commentURL, err = cc.UpsertComment(repo, number, paths, commitSHA, title)
+		commentURL, err = cc.UpsertComment(repo, number, paths, commitSHA, opts.title)
 		if err != nil {
 			return fmt.Errorf("upsert comment: %w", err)
 		}
 	}
 
-	if asJSON {
+	if opts.asJSON {
 		result := uploadResult{
 			Repo:       repo.String(),
 			Target:     target,
@@ -341,9 +382,9 @@ func runUpload(number int, filePaths []string, title string, postComment bool, r
 			CommentURL: commentURL, // omitempty hides it when unset
 			Files:      make([]uploadFile, 0, len(paths)),
 		}
-		if key != "" {
+		if opts.key != "" {
 			result.Namespace = "misc"
-			result.Key = key
+			result.Key = opts.key
 		} else {
 			result.Namespace = "issue"
 			result.Number = number
@@ -377,7 +418,7 @@ func runUpload(number int, filePaths []string, title string, postComment bool, r
 		_, _ = fmt.Fprintf(stderr, "  %s\n", gh.EmbedURL(repo, commitSHA, p.Path))
 	}
 
-	if postComment {
+	if opts.postComment {
 		_, _ = fmt.Fprintf(stderr, "Commented: %s\n", commentURL)
 	}
 

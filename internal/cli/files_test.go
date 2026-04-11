@@ -185,9 +185,20 @@ func TestValidateName(t *testing.T) {
 			{"", "cannot be empty"},
 			{".", `cannot be "."`},
 			{"..", `cannot be ".."`},
+			// Unix path separators
 			{"foo/bar.png", "must be a basename"},
 			{"/abs/path.png", "must be a basename"},
 			{"foo\\bar.png", "must be a basename"},
+			// Windows-reserved characters — rejected so the basename is
+			// legal on every common filesystem without per-platform
+			// escaping when embedded in URLs or git tree entries.
+			{"foo<bar.png", "legal filesystem characters"},
+			{"foo>bar.png", "legal filesystem characters"},
+			{"foo:bar.png", "legal filesystem characters"},
+			{`foo"bar.png`, "legal filesystem characters"},
+			{"foo|bar.png", "legal filesystem characters"},
+			{"foo?bar.png", "legal filesystem characters"},
+			{"foo*bar.png", "legal filesystem characters"},
 			{"has\x00nul.png", "NUL bytes"},
 			{strings.Repeat("x", 256), "255 bytes or fewer"},
 		}

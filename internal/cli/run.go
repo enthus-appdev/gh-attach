@@ -10,11 +10,16 @@ import (
 	"github.com/enthus-appdev/gh-attach/internal/gh"
 )
 
-// gitDataClient is the subset of gh.GitDataClient that runUpload needs.
-// Defined as an interface here so tests can swap in a fake client that
-// returns canned results without making HTTP calls.
+// gitDataClient is the subset of gh.GitDataClient that the cli layer
+// needs. Defined as an interface here so tests can swap in a fake
+// client that returns canned results without making HTTP calls. The
+// real *gh.GitDataClient satisfies all three methods; individual test
+// fakes typically only populate the one(s) the test under scrutiny
+// actually exercises.
 type gitDataClient interface {
 	PushAttachments(repo *gh.Repo, refPath, commitMessage string, files []string) ([]gh.AttachmentPath, string, error)
+	ListRefs(repo *gh.Repo, subPrefix string) ([]gh.RefEntry, error)
+	DeleteRef(repo *gh.Repo, refPath string) error
 }
 
 // commentClient is the subset of gh.CommentClient that runUpload needs.
@@ -50,20 +55,36 @@ func defaultDeps() runDeps {
 	}
 }
 
-// Run parses args, runs the upload flow, and returns the process exit
-// code. stdout receives the rendered markdown (the primary composable
-// output); stderr receives progress messages, the directly-embeddable
-// URL list, and any error details. This is the function the command
-// entry point calls; production code always goes through defaultDeps.
-func Run(args []string, stdout, stderr io.Writer) int {
-	return runWithDeps(args, stdout, stderr, defaultDeps())
+// Run parses args, dispatches to the right subcommand (or the default
+// upload flow), and returns the process exit code. stdin is used by
+// subcommands that need interactive confirmation (delete). stdout
+// receives primary data output (rendered markdown, list output);
+// stderr receives progress, prompts, URL lists, and errors. This is
+// the function the command entry point calls; production code always
+// goes through defaultDeps.
+func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	return runWithDeps(args, stdin, stdout, stderr, defaultDeps())
 }
 
 // runWithDeps is the testable core of Run: it accepts the dependency
 // struct so unit tests can inject fakes for the repo/PR resolvers, the
 // git data client, the comment client, and the file expander. Run()
 // calls it with defaultDeps() for real production runs.
-func runWithDeps(args []string, stdout, stderr io.Writer, deps runDeps) int {
+func runWithDeps(args []string, stdin io.Reader, stdout, stderr io.Writer, deps runDeps) int {
+	// Subcommand routing — if the first arg is exactly a known
+	// subcommand name and not a flag, dispatch to it. Otherwise fall
+	// through to the default upload flow. Users who want to upload a
+	// file literally named "list" or "delete" can pass `./list` /
+	// `./delete` to disambiguate.
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		switch args[0] {
+		case "list":
+			return runList(args[1:], stdout, stderr, deps)
+		case "delete":
+			return runDelete(args[1:], stdin, stdout, stderr, deps)
+		}
+	}
+
 	fs := flag.NewFlagSet("gh-attach", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 
@@ -73,18 +94,22 @@ func runWithDeps(args []string, stdout, stderr io.Writer, deps runDeps) int {
 	key := fs.String("key", "", "Upload to an ad-hoc key under refs/uploads/misc/KEY instead of a PR/issue (mutually exclusive with NUMBER and --comment)")
 
 	fs.Usage = func() {
-		_, _ = fmt.Fprintf(stderr,"Upload images to a GitHub PR or issue and print embeddable markdown to stdout.\n\n")
-		_, _ = fmt.Fprintf(stderr,"Usage:\n")
-		_, _ = fmt.Fprintf(stderr,"  gh attach [flags] [NUMBER] FILE...\n")
-		_, _ = fmt.Fprintf(stderr,"  gh attach [flags] --key KEY FILE...\n\n")
-		_, _ = fmt.Fprintf(stderr,"If NUMBER is omitted, it is auto-detected as a PR from the current branch.\n")
-		_, _ = fmt.Fprintf(stderr,"NUMBER or --key must be passed explicitly whenever --repo is used.\n\n")
-		_, _ = fmt.Fprintf(stderr,"Use --key to upload without a PR/issue — e.g. for a README image or a\n")
-		_, _ = fmt.Fprintf(stderr,"not-yet-created issue. Ad-hoc uploads are stored under refs/uploads/misc/KEY\n")
-		_, _ = fmt.Fprintf(stderr,"and are NOT auto-cleaned by the cleanup workflow — see README for manual removal.\n\n")
-		_, _ = fmt.Fprintf(stderr,"By default, the rendered markdown is written to stdout and no comment is\n")
-		_, _ = fmt.Fprintf(stderr,"posted. Pass --comment to also upsert the markdown as a PR/issue comment.\n\n")
-		_, _ = fmt.Fprintf(stderr,"Flags:\n")
+		_, _ = fmt.Fprintf(stderr, "Upload images to a GitHub PR or issue and print embeddable markdown to stdout.\n\n")
+		_, _ = fmt.Fprintf(stderr, "Usage:\n")
+		_, _ = fmt.Fprintf(stderr, "  gh attach [flags] [NUMBER] FILE...\n")
+		_, _ = fmt.Fprintf(stderr, "  gh attach [flags] --key KEY FILE...\n")
+		_, _ = fmt.Fprintf(stderr, "  gh attach list   [flags]\n")
+		_, _ = fmt.Fprintf(stderr, "  gh attach delete [flags] NUMBER\n")
+		_, _ = fmt.Fprintf(stderr, "  gh attach delete [flags] --key KEY\n\n")
+		_, _ = fmt.Fprintf(stderr, "If NUMBER is omitted on upload, it is auto-detected as a PR from the current branch.\n")
+		_, _ = fmt.Fprintf(stderr, "NUMBER or --key must be passed explicitly whenever --repo is used.\n\n")
+		_, _ = fmt.Fprintf(stderr, "Use --key to upload without a PR/issue — e.g. for a README image or a\n")
+		_, _ = fmt.Fprintf(stderr, "not-yet-created issue. Ad-hoc uploads are stored under refs/uploads/misc/KEY\n")
+		_, _ = fmt.Fprintf(stderr, "and are NOT auto-cleaned by the cleanup workflow. Use `gh attach list` to\n")
+		_, _ = fmt.Fprintf(stderr, "inspect and `gh attach delete` to remove them.\n\n")
+		_, _ = fmt.Fprintf(stderr, "By default, the rendered markdown is written to stdout and no comment is\n")
+		_, _ = fmt.Fprintf(stderr, "posted. Pass --comment to also upsert the markdown as a PR/issue comment.\n\n")
+		_, _ = fmt.Fprintf(stderr, "Flags:\n")
 		fs.PrintDefaults()
 	}
 

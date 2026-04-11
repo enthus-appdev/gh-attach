@@ -16,17 +16,31 @@ import (
 
 // fakeGitClient is a test double for gh.GitDataClient. It captures the
 // args it was called with and returns canned results or a canned error.
+// It implements the full gitDataClient interface (PushAttachments +
+// ListRefs + DeleteRef); individual tests only populate the fields
+// relevant to the method they exercise.
 type fakeGitClient struct {
-	// canned response
+	// canned response for PushAttachments
 	paths  []gh.AttachmentPath
 	sha    string
 	err    error
 	called bool
-	// captured args
+	// captured args (PushAttachments)
 	gotRepo          *gh.Repo
 	gotRefPath       string
 	gotCommitMessage string
 	gotFiles         []string
+
+	// canned response for ListRefs
+	listRefs    []gh.RefEntry
+	listErr     error
+	listCalled  bool
+	gotListPrefix string
+
+	// canned response for DeleteRef
+	deleteErr     error
+	deleteCalled  bool
+	gotDeletePath string
 }
 
 func (f *fakeGitClient) PushAttachments(repo *gh.Repo, refPath, commitMessage string, files []string) ([]gh.AttachmentPath, string, error) {
@@ -39,6 +53,23 @@ func (f *fakeGitClient) PushAttachments(repo *gh.Repo, refPath, commitMessage st
 		return nil, "", f.err
 	}
 	return f.paths, f.sha, nil
+}
+
+func (f *fakeGitClient) ListRefs(repo *gh.Repo, subPrefix string) ([]gh.RefEntry, error) {
+	f.listCalled = true
+	f.gotRepo = repo
+	f.gotListPrefix = subPrefix
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
+	return f.listRefs, nil
+}
+
+func (f *fakeGitClient) DeleteRef(repo *gh.Repo, refPath string) error {
+	f.deleteCalled = true
+	f.gotRepo = repo
+	f.gotDeletePath = refPath
+	return f.deleteErr
 }
 
 // fakeCmtClient is a test double for gh.CommentClient. Same shape as
@@ -340,7 +371,7 @@ func TestRunUploadDependencyErrors(t *testing.T) {
 func TestRunParseErrors(t *testing.T) {
 	t.Run("no args shows usage and returns 1", func(t *testing.T) {
 		var stdout, stderr bytes.Buffer
-		code := Run(nil, &stdout, &stderr)
+		code := Run(nil, strings.NewReader(""), &stdout, &stderr)
 		if code != 1 {
 			t.Errorf("exit code = %d, want 1", code)
 		}
@@ -351,7 +382,7 @@ func TestRunParseErrors(t *testing.T) {
 
 	t.Run("unknown flag returns 1", func(t *testing.T) {
 		var stdout, stderr bytes.Buffer
-		code := Run([]string{"--nope", "file.png"}, &stdout, &stderr)
+		code := Run([]string{"--nope", "file.png"}, strings.NewReader(""), &stdout, &stderr)
 		if code != 1 {
 			t.Errorf("exit code = %d, want 1", code)
 		}
@@ -362,7 +393,7 @@ func TestRunParseErrors(t *testing.T) {
 
 	t.Run("-h shows usage and returns 1", func(t *testing.T) {
 		var stdout, stderr bytes.Buffer
-		code := Run([]string{"-h"}, &stdout, &stderr)
+		code := Run([]string{"-h"}, strings.NewReader(""), &stdout, &stderr)
 		if code != 1 {
 			t.Errorf("exit code = %d, want 1", code)
 		}
@@ -373,7 +404,7 @@ func TestRunParseErrors(t *testing.T) {
 
 	t.Run("number only (no files) returns 1", func(t *testing.T) {
 		var stdout, stderr bytes.Buffer
-		code := Run([]string{"42"}, &stdout, &stderr)
+		code := Run([]string{"42"}, strings.NewReader(""), &stdout, &stderr)
 		if code != 1 {
 			t.Errorf("exit code = %d, want 1", code)
 		}
@@ -389,7 +420,7 @@ func TestRunArgConflictsViaFlags(t *testing.T) {
 	// cleanly without touching the network.
 	t.Run("NUMBER + --key", func(t *testing.T) {
 		var stdout, stderr bytes.Buffer
-		code := Run([]string{"--key", "design", "42", "file.png"}, &stdout, &stderr)
+		code := Run([]string{"--key", "design", "42", "file.png"}, strings.NewReader(""), &stdout, &stderr)
 		if code != 1 {
 			t.Errorf("exit code = %d, want 1", code)
 		}
@@ -400,7 +431,7 @@ func TestRunArgConflictsViaFlags(t *testing.T) {
 
 	t.Run("--key + --comment", func(t *testing.T) {
 		var stdout, stderr bytes.Buffer
-		code := Run([]string{"--key", "design", "--comment", "file.png"}, &stdout, &stderr)
+		code := Run([]string{"--key", "design", "--comment", "file.png"}, strings.NewReader(""), &stdout, &stderr)
 		if code != 1 {
 			t.Errorf("exit code = %d, want 1", code)
 		}
@@ -411,7 +442,7 @@ func TestRunArgConflictsViaFlags(t *testing.T) {
 
 	t.Run("--key pure numeric rejected", func(t *testing.T) {
 		var stdout, stderr bytes.Buffer
-		code := Run([]string{"--key", "123", "file.png"}, &stdout, &stderr)
+		code := Run([]string{"--key", "123", "file.png"}, strings.NewReader(""), &stdout, &stderr)
 		if code != 1 {
 			t.Errorf("exit code = %d, want 1", code)
 		}
@@ -434,7 +465,7 @@ func TestRunWithDepsFullFlow(t *testing.T) {
 		deps := happyDeps(git, &fakeCmtClient{})
 
 		var stdout, stderr bytes.Buffer
-		code := runWithDeps([]string{"42", "file.png"}, &stdout, &stderr, deps)
+		code := runWithDeps([]string{"42", "file.png"}, strings.NewReader(""), &stdout, &stderr, deps)
 		if code != 0 {
 			t.Fatalf("exit code = %d, want 0\nstderr=%s", code, stderr.String())
 		}
@@ -453,7 +484,7 @@ func TestRunWithDepsFullFlow(t *testing.T) {
 		}
 		deps := happyDeps(git, &fakeCmtClient{})
 		var stdout, stderr bytes.Buffer
-		code := runWithDeps([]string{"--key", "my-key", "f.png"}, &stdout, &stderr, deps)
+		code := runWithDeps([]string{"--key", "my-key", "f.png"}, strings.NewReader(""), &stdout, &stderr, deps)
 		if code != 0 {
 			t.Fatalf("exit code = %d, want 0\nstderr=%s", code, stderr.String())
 		}
@@ -470,7 +501,7 @@ func TestRunWithDepsFullFlow(t *testing.T) {
 		cmt := &fakeCmtClient{url: "https://example/cmt"}
 		deps := happyDeps(git, cmt)
 		var stdout, stderr bytes.Buffer
-		code := runWithDeps([]string{"--comment", "--title", "Hi", "5", "f.png"}, &stdout, &stderr, deps)
+		code := runWithDeps([]string{"--comment", "--title", "Hi", "5", "f.png"}, strings.NewReader(""), &stdout, &stderr, deps)
 		if code != 0 {
 			t.Fatalf("exit code = %d, want 0\nstderr=%s", code, stderr.String())
 		}
@@ -492,7 +523,7 @@ func TestRunWithDepsFullFlow(t *testing.T) {
 		}
 		deps := happyDeps(git, &fakeCmtClient{})
 		var stdout, stderr bytes.Buffer
-		code := runWithDeps([]string{"42", "Screen Shot 2026.png"}, &stdout, &stderr, deps)
+		code := runWithDeps([]string{"42", "Screen Shot 2026.png"}, strings.NewReader(""), &stdout, &stderr, deps)
 		if code != 0 {
 			t.Fatalf("exit = %d, want 0. stderr=%s", code, stderr.String())
 		}
@@ -516,7 +547,7 @@ func TestRunWithDepsFullFlow(t *testing.T) {
 		}
 		deps := happyDeps(git, &fakeCmtClient{})
 		var stdout, stderr bytes.Buffer
-		code := runWithDeps([]string{"f.png"}, &stdout, &stderr, deps)
+		code := runWithDeps([]string{"f.png"}, strings.NewReader(""), &stdout, &stderr, deps)
 		if code != 0 {
 			t.Fatalf("exit code = %d, want 0\nstderr=%s", code, stderr.String())
 		}
@@ -528,7 +559,7 @@ func TestRunWithDepsFullFlow(t *testing.T) {
 	t.Run("runUpload error bubbles up as stderr + exit 1", func(t *testing.T) {
 		deps := happyDeps(&fakeGitClient{err: errors.New("bang")}, &fakeCmtClient{})
 		var stdout, stderr bytes.Buffer
-		code := runWithDeps([]string{"42", "f.png"}, &stdout, &stderr, deps)
+		code := runWithDeps([]string{"42", "f.png"}, strings.NewReader(""), &stdout, &stderr, deps)
 		if code != 1 {
 			t.Errorf("exit code = %d, want 1", code)
 		}
@@ -545,7 +576,7 @@ func TestRunDelegatesToRunWithDeps(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	// Unknown flag → runWithDeps hits the flag.Parse error path → 1.
 	// Exercises Run()'s only statement.
-	code := Run([]string{"--definitely-not-a-flag"}, &stdout, &stderr)
+	code := Run([]string{"--definitely-not-a-flag"}, strings.NewReader(""), &stdout, &stderr)
 	if code != 1 {
 		t.Errorf("exit code = %d, want 1", code)
 	}

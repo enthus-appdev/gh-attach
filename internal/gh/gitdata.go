@@ -9,13 +9,45 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
 )
+
+// httpClient is the shared HTTP client used by every GitDataClient and
+// CommentClient request. A timeout is mandatory for a CLI tool — without
+// it a stalled upload or an unresponsive GitHub edge could cause the
+// process to block indefinitely (particularly painful in CI / scripts).
+//
+// 60s is the longest any normal gh-attach operation should take: the
+// biggest blob upload is bounded by GitHub's per-blob size limit, and
+// every other call (list refs, delete ref, upsert comment) is a small
+// JSON request/response. Increase only if a legitimate operation starts
+// getting killed.
+var httpClient = &http.Client{Timeout: 60 * time.Second}
 
 // AttachmentPath holds the tree-relative path of an uploaded attachment.
 // Stored under refs/uploads/<refPath>, the tree contains files at top level
 // keyed by basename, so Path doubles as both the tree path and the display name.
 type AttachmentPath struct {
 	Path string // e.g. "screenshot.png"
+}
+
+// RefEntry is a parsed view of a single upload ref returned by ListRefs.
+// It carries the full git ref path plus the namespace-aware breakdown
+// that the CLI layer uses to render either text columns or JSON.
+//
+// For refs/uploads/issues/<N>: Namespace="issue", Number=<N>, Target="#<N>"
+// For refs/uploads/misc/<key>: Namespace="misc",  Key=<key>,  Target="misc/<key>"
+// Anything else (future namespaces) reports Namespace="other" and Target
+// is the part after refs/uploads/.
+type RefEntry struct {
+	Ref       string `json:"ref"`                // "refs/uploads/issues/42"
+	SHA       string `json:"sha"`                // tip commit SHA
+	Namespace string `json:"namespace"`          // "issue" | "misc" | "other"
+	Target    string `json:"target"`             // "#42" | "misc/design-v2"
+	Number    int    `json:"number,omitempty"`   // populated for namespace=="issue"
+	Key       string `json:"key,omitempty"`      // populated for namespace=="misc"
 }
 
 // GitDataClient interacts with the GitHub Git Data API.
@@ -180,7 +212,7 @@ func (c *GitDataClient) get(path string, result interface{}) error {
 	req.Header.Set("Authorization", "token "+c.Token)
 	req.Header.Set("Accept", "application/vnd.github+json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return err
 	}
@@ -209,7 +241,7 @@ func (c *GitDataClient) post(path string, payload interface{}, result interface{
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return err
 	}
@@ -235,7 +267,7 @@ func (c *GitDataClient) postNoResponse(path string, payload interface{}) error {
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return err
 	}
@@ -261,7 +293,7 @@ func (c *GitDataClient) patch(path string, payload interface{}) error {
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return err
 	}
@@ -272,4 +304,147 @@ func (c *GitDataClient) patch(path string, payload interface{}) error {
 		return fmt.Errorf("PATCH %s: %d — %s", path, resp.StatusCode, respBody)
 	}
 	return nil
+}
+
+func (c *GitDataClient) httpDelete(path string) error {
+	req, err := http.NewRequest("DELETE", c.BaseURL+"/"+path, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "token "+c.Token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode < 300 {
+		return nil
+	}
+
+	// Read the body once — we need it for both the not-found detection
+	// and the fallback error message.
+	respBody, _ := io.ReadAll(resp.Body)
+
+	// Classic 404 — rare from the GitHub Git Data API for refs but
+	// present historically and on some Enterprise instances.
+	if resp.StatusCode == http.StatusNotFound {
+		return errNotFound
+	}
+	// GitHub's Git Data API returns `422 Unprocessable Entity` with
+	// {"message":"Reference does not exist"} when you DELETE a ref
+	// that was never created. This is semantically "not found" but
+	// with a non-404 status code. Detect the specific message so the
+	// CLI layer can render a clean error instead of dumping the raw
+	// 422 JSON body.
+	if resp.StatusCode == http.StatusUnprocessableEntity &&
+		bytes.Contains(respBody, []byte("Reference does not exist")) {
+		return errNotFound
+	}
+
+	return fmt.Errorf("DELETE %s: %d — %s", path, resp.StatusCode, respBody)
+}
+
+// errNotFound is returned by httpDelete and ListRefs when the target
+// ref or prefix doesn't exist. Callers can compare with errors.Is
+// to render a friendly "not found" message at the CLI layer.
+var errNotFound = fmt.Errorf("not found")
+
+// ErrNotFound is the exported sentinel for callers that want to
+// distinguish 404 responses from other errors.
+var ErrNotFound = errNotFound
+
+// ListRefs enumerates upload refs matching the given sub-prefix under
+// refs/uploads/. Valid values for subPrefix are "" (all upload refs),
+// "issues" (issue-scoped only), or "misc" (ad-hoc only). Each returned
+// RefEntry has its Namespace/Target/Number/Key fields pre-populated
+// so the CLI layer can render without re-parsing.
+//
+// Uses the GitHub matching-refs endpoint:
+//
+//	GET /repos/{owner}/{repo}/git/matching-refs/uploads[/{subPrefix}]
+//
+// An empty result is not an error — ListRefs returns nil, nil.
+func (c *GitDataClient) ListRefs(repo *Repo, subPrefix string) ([]RefEntry, error) {
+	apiPath := fmt.Sprintf("repos/%s/%s/git/matching-refs/uploads", repo.Owner, repo.Name)
+	if subPrefix != "" {
+		apiPath += "/" + subPrefix
+	}
+
+	// matching-refs returns an empty array (not 404) when nothing matches.
+	var raw []struct {
+		Ref    string `json:"ref"`
+		Object struct {
+			SHA string `json:"sha"`
+		} `json:"object"`
+	}
+	if err := c.get(apiPath, &raw); err != nil {
+		return nil, err
+	}
+
+	entries := make([]RefEntry, 0, len(raw))
+	for _, r := range raw {
+		entries = append(entries, parseRefEntry(r.Ref, r.Object.SHA))
+	}
+	return entries, nil
+}
+
+// parseRefEntry turns a raw git ref path into a namespace-tagged
+// RefEntry. It is unexported so the CLI layer doesn't accidentally
+// skip ListRefs and construct entries from raw strings.
+func parseRefEntry(ref, sha string) RefEntry {
+	// Expected shapes:
+	//   refs/uploads/issues/<N>
+	//   refs/uploads/misc/<key...>
+	//   refs/uploads/<other>/<anything>
+	entry := RefEntry{Ref: ref, SHA: sha, Namespace: "other"}
+
+	const prefix = "refs/uploads/"
+	if !strings.HasPrefix(ref, prefix) {
+		entry.Target = ref
+		return entry
+	}
+	rest := strings.TrimPrefix(ref, prefix)
+
+	// Split off the namespace segment (first /-separated component).
+	slash := strings.Index(rest, "/")
+	if slash < 0 {
+		// Single-segment rest, treat as "other" with that as target.
+		entry.Target = rest
+		return entry
+	}
+	namespace := rest[:slash]
+	remainder := rest[slash+1:]
+
+	switch namespace {
+	case "issues":
+		if n, err := strconv.Atoi(remainder); err == nil {
+			entry.Namespace = "issue"
+			entry.Number = n
+			entry.Target = "#" + remainder
+			return entry
+		}
+		// issues/<not-a-number> — shouldn't happen in practice but
+		// don't crash; treat as "other" to surface it in listings.
+		entry.Target = "issues/" + remainder
+		return entry
+	case "misc":
+		entry.Namespace = "misc"
+		entry.Key = remainder
+		entry.Target = "misc/" + remainder
+		return entry
+	default:
+		entry.Target = rest
+		return entry
+	}
+}
+
+// DeleteRef removes the ref at refs/<refPath>. Returns ErrNotFound if
+// the ref doesn't exist so CLI callers can print a clean "not found"
+// message without matching on error strings.
+func (c *GitDataClient) DeleteRef(repo *Repo, refPath string) error {
+	apiPath := fmt.Sprintf("repos/%s/%s/git/refs/%s", repo.Owner, repo.Name, refPath)
+	return c.httpDelete(apiPath)
 }

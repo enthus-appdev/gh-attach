@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -8,6 +9,12 @@ import (
 	"strings"
 	"testing"
 )
+
+// errReader is an io.Reader that always fails on Read. Used to
+// exercise error paths in code that copies from an io.Reader.
+type errReader struct{}
+
+func (errReader) Read(_ []byte) (int, error) { return 0, errors.New("boom") }
 
 func TestExpandFiles(t *testing.T) {
 	tmpDir := t.TempDir()
@@ -148,6 +155,119 @@ func TestExpandFiles(t *testing.T) {
 		}
 		if !strings.Contains(err.Error(), "no files matched") {
 			t.Errorf("error = %q, want 'no files matched'", err.Error())
+		}
+	})
+}
+
+func TestValidateName(t *testing.T) {
+	t.Run("valid basenames are accepted", func(t *testing.T) {
+		good := []string{
+			"shot.png",
+			"image.jpg",
+			"Screen Shot 2026.png",
+			".hidden.png",
+			"with-dashes_and.dots.1.png",
+			"übernote.md", // non-ASCII is fine
+			strings.Repeat("x", 255),
+		}
+		for _, n := range good {
+			if err := validateName(n); err != nil {
+				t.Errorf("validateName(%q) = %v, want nil", n, err)
+			}
+		}
+	})
+	t.Run("invalid basenames are rejected", func(t *testing.T) {
+		tests := []struct {
+			in        string
+			errSubstr string
+		}{
+			{"", "cannot be empty"},
+			{".", `cannot be "."`},
+			{"..", `cannot be ".."`},
+			{"foo/bar.png", "must be a basename"},
+			{"/abs/path.png", "must be a basename"},
+			{"foo\\bar.png", "must be a basename"},
+			{"has\x00nul.png", "NUL bytes"},
+			{strings.Repeat("x", 256), "255 bytes or fewer"},
+		}
+		for _, tt := range tests {
+			err := validateName(tt.in)
+			if err == nil {
+				t.Errorf("validateName(%q) = nil, want error", tt.in)
+				continue
+			}
+			if !strings.Contains(err.Error(), tt.errSubstr) {
+				t.Errorf("validateName(%q) = %q, want substring %q", tt.in, err.Error(), tt.errSubstr)
+			}
+		}
+	})
+}
+
+func TestMaterializeStdin(t *testing.T) {
+	t.Run("copies bytes into a file named by the basename", func(t *testing.T) {
+		path, cleanup, err := materializeStdin(strings.NewReader("hello world"), "test.bin")
+		if err != nil {
+			t.Fatalf("materializeStdin: %v", err)
+		}
+		defer cleanup()
+		if got := filepath.Base(path); got != "test.bin" {
+			t.Errorf("basename = %q, want test.bin", got)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("ReadFile: %v", err)
+		}
+		if string(data) != "hello world" {
+			t.Errorf("content = %q, want %q", data, "hello world")
+		}
+	})
+	t.Run("empty input produces an empty file", func(t *testing.T) {
+		path, cleanup, err := materializeStdin(strings.NewReader(""), "empty.bin")
+		if err != nil {
+			t.Fatalf("materializeStdin: %v", err)
+		}
+		defer cleanup()
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatalf("Stat: %v", err)
+		}
+		if info.Size() != 0 {
+			t.Errorf("size = %d, want 0", info.Size())
+		}
+	})
+	t.Run("cleanup removes the temp directory", func(t *testing.T) {
+		path, cleanup, err := materializeStdin(strings.NewReader("x"), "f.bin")
+		if err != nil {
+			t.Fatalf("materializeStdin: %v", err)
+		}
+		cleanup()
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Errorf("expected temp file to be removed, stat err = %v", err)
+		}
+		// Also check the parent directory is gone.
+		if _, err := os.Stat(filepath.Dir(path)); !os.IsNotExist(err) {
+			t.Errorf("expected temp dir to be removed, stat err = %v", err)
+		}
+	})
+	t.Run("read error is wrapped and temp dir is cleaned up", func(t *testing.T) {
+		// A reader that always errors covers the io.Copy error branch
+		// and confirms we wrap the underlying cause with %w.
+		path, cleanup, err := materializeStdin(errReader{}, "f.bin")
+		if err == nil {
+			cleanup()
+			t.Fatal("expected error, got nil")
+		}
+		if cleanup != nil {
+			t.Error("expected cleanup to be nil on error (caller cannot defer it)")
+		}
+		if path != "" {
+			t.Errorf("expected empty path on error, got %q", path)
+		}
+		if !strings.Contains(err.Error(), "read stdin") {
+			t.Errorf("error = %q, want substring 'read stdin'", err.Error())
+		}
+		if unwrapped := errors.Unwrap(err); unwrapped == nil || unwrapped.Error() != "boom" {
+			t.Errorf("expected wrapped cause %q, got %v", "boom", unwrapped)
 		}
 	})
 }

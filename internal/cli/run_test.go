@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -32,10 +34,18 @@ type fakeGitClient struct {
 	gotCommitMessage string
 	gotFiles         []string
 
+	// If true, PushAttachments snapshots the bytes of each file at
+	// call time into gotPushContent (keyed by basename). Needed by
+	// stdin tests because runUpload defers os.RemoveAll on the temp
+	// dir, so the temp file is gone by the time the test body runs
+	// its assertions.
+	savePushContent bool
+	gotPushContent  map[string][]byte
+
 	// canned response for ListRefs
-	listRefs    []gh.RefEntry
-	listErr     error
-	listCalled  bool
+	listRefs      []gh.RefEntry
+	listErr       error
+	listCalled    bool
 	gotListPrefix string
 
 	// canned response for DeleteRef
@@ -50,6 +60,16 @@ func (f *fakeGitClient) PushAttachments(repo *gh.Repo, refPath, commitMessage st
 	f.gotRefPath = refPath
 	f.gotCommitMessage = commitMessage
 	f.gotFiles = files
+	if f.savePushContent {
+		f.gotPushContent = make(map[string][]byte, len(files))
+		for _, p := range files {
+			data, err := os.ReadFile(p)
+			if err != nil {
+				return nil, "", err
+			}
+			f.gotPushContent[filepath.Base(p)] = data
+		}
+	}
 	if f.err != nil {
 		return nil, "", f.err
 	}
@@ -122,6 +142,7 @@ func happyDeps(gitClient *fakeGitClient, cmtClient *fakeCmtClient) runDeps {
 		expandFiles: func(patterns []string) ([]string, error) {
 			return patterns, nil
 		},
+		stdin: strings.NewReader(""),
 	}
 }
 
@@ -138,7 +159,7 @@ func TestRunUploadIssueMode(t *testing.T) {
 	deps := happyDeps(git, cmt)
 
 	var stdout, stderr bytes.Buffer
-	err := runUpload(42, []string{"banner.png"}, "", false, "", "", false, &stdout, &stderr, deps)
+	err := runUpload(42, []string{"banner.png"}, "", false, "", "", "", false, &stdout, &stderr, deps)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -180,7 +201,7 @@ func TestRunUploadKeyMode(t *testing.T) {
 	deps := happyDeps(git, cmt)
 
 	var stdout, stderr bytes.Buffer
-	err := runUpload(0, []string{"mockup.png"}, "Design v2", false, "", "design-v2", false, &stdout, &stderr, deps)
+	err := runUpload(0, []string{"mockup.png"}, "Design v2", false, "", "design-v2", "", false, &stdout, &stderr, deps)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -206,7 +227,7 @@ func TestRunUploadAutoDetectPR(t *testing.T) {
 	deps := happyDeps(git, &fakeCmtClient{})
 
 	var stdout, stderr bytes.Buffer
-	err := runUpload(0, []string{"f.png"}, "", false, "", "", false, &stdout, &stderr, deps)
+	err := runUpload(0, []string{"f.png"}, "", false, "", "", "", false, &stdout, &stderr, deps)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -222,7 +243,7 @@ func TestRunUploadWithComment(t *testing.T) {
 	deps := happyDeps(git, cmt)
 
 	var stdout, stderr bytes.Buffer
-	err := runUpload(7, []string{"f.png"}, "", true, "", "", false, &stdout, &stderr, deps)
+	err := runUpload(7, []string{"f.png"}, "", true, "", "", "", false, &stdout, &stderr, deps)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -249,7 +270,7 @@ func TestRunUpload_json_issue_mode(t *testing.T) {
 	deps := happyDeps(git, &fakeCmtClient{})
 
 	var stdout, stderr bytes.Buffer
-	err := runUpload(42, []string{"banner.png"}, "", false, "", "", true, &stdout, &stderr, deps)
+	err := runUpload(42, []string{"banner.png"}, "", false, "", "", "", true, &stdout, &stderr, deps)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -309,7 +330,7 @@ func TestRunUpload_json_key_mode(t *testing.T) {
 	deps := happyDeps(git, &fakeCmtClient{})
 
 	var stdout, stderr bytes.Buffer
-	err := runUpload(0, []string{"mockup.png"}, "", false, "", "design-v2", true, &stdout, &stderr, deps)
+	err := runUpload(0, []string{"mockup.png"}, "", false, "", "design-v2", "", true, &stdout, &stderr, deps)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -347,7 +368,7 @@ func TestRunUpload_json_with_comment(t *testing.T) {
 	deps := happyDeps(git, cmt)
 
 	var stdout, stderr bytes.Buffer
-	err := runUpload(7, []string{"f.png"}, "", true, "", "", true, &stdout, &stderr, deps)
+	err := runUpload(7, []string{"f.png"}, "", true, "", "", "", true, &stdout, &stderr, deps)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -378,7 +399,7 @@ func TestRunUpload_json_url_encoding(t *testing.T) {
 	deps := happyDeps(git, &fakeCmtClient{})
 
 	var stdout, stderr bytes.Buffer
-	err := runUpload(1, []string{"Screen Shot 2026.png"}, "", false, "", "", true, &stdout, &stderr, deps)
+	err := runUpload(1, []string{"Screen Shot 2026.png"}, "", false, "", "", "", true, &stdout, &stderr, deps)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -405,7 +426,7 @@ func TestRunUpload_json_via_runWithDeps(t *testing.T) {
 	deps := happyDeps(git, &fakeCmtClient{})
 
 	var stdout, stderr bytes.Buffer
-	code := runWithDeps([]string{"--json", "42", "f.png"}, strings.NewReader(""), &stdout, &stderr, deps)
+	code := runWithDeps([]string{"--json", "42", "f.png"}, &stdout, &stderr, deps)
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0. stderr=%s", code, stderr.String())
 	}
@@ -462,7 +483,7 @@ func TestRunUploadConflictsAndValidation(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			deps := happyDeps(&fakeGitClient{}, &fakeCmtClient{})
-			err := runUpload(tt.number, tt.files, "", tt.postComment, tt.repoOverride, tt.key, false, io.Discard, io.Discard, deps)
+			err := runUpload(tt.number, tt.files, "", tt.postComment, tt.repoOverride, tt.key, "", false, io.Discard, io.Discard, deps)
 			if err == nil {
 				t.Fatal("expected error, got nil")
 			}
@@ -484,7 +505,7 @@ func TestRunUploadDependencyErrors(t *testing.T) {
 	t.Run("resolveRepo error", func(t *testing.T) {
 		deps := baseDeps()
 		deps.resolveRepo = func(string) (*gh.Repo, error) { return nil, errors.New("boom") }
-		err := runUpload(42, []string{"f.png"}, "", false, "", "", false, io.Discard, io.Discard, deps)
+		err := runUpload(42, []string{"f.png"}, "", false, "", "", "", false, io.Discard, io.Discard, deps)
 		if err == nil || !strings.Contains(err.Error(), "resolve repo: boom") {
 			t.Errorf("got %v, want 'resolve repo: boom'", err)
 		}
@@ -493,7 +514,7 @@ func TestRunUploadDependencyErrors(t *testing.T) {
 	t.Run("resolvePR error", func(t *testing.T) {
 		deps := baseDeps()
 		deps.resolvePR = func(*gh.Repo) (int, error) { return 0, errors.New("no PR") }
-		err := runUpload(0, []string{"f.png"}, "", false, "", "", false, io.Discard, io.Discard, deps)
+		err := runUpload(0, []string{"f.png"}, "", false, "", "", "", false, io.Discard, io.Discard, deps)
 		if err == nil || !strings.Contains(err.Error(), "resolve PR: no PR") {
 			t.Errorf("got %v, want 'resolve PR: no PR'", err)
 		}
@@ -502,7 +523,7 @@ func TestRunUploadDependencyErrors(t *testing.T) {
 	t.Run("expandFiles error", func(t *testing.T) {
 		deps := baseDeps()
 		deps.expandFiles = func([]string) ([]string, error) { return nil, errors.New("no files") }
-		err := runUpload(42, []string{"f.png"}, "", false, "", "", false, io.Discard, io.Discard, deps)
+		err := runUpload(42, []string{"f.png"}, "", false, "", "", "", false, io.Discard, io.Discard, deps)
 		if err == nil || !strings.Contains(err.Error(), "no files") {
 			t.Errorf("got %v, want 'no files'", err)
 		}
@@ -511,7 +532,7 @@ func TestRunUploadDependencyErrors(t *testing.T) {
 	t.Run("newGitClient error", func(t *testing.T) {
 		deps := baseDeps()
 		deps.newGitClient = func() (gitDataClient, error) { return nil, errors.New("no auth") }
-		err := runUpload(42, []string{"f.png"}, "", false, "", "", false, io.Discard, io.Discard, deps)
+		err := runUpload(42, []string{"f.png"}, "", false, "", "", "", false, io.Discard, io.Discard, deps)
 		if err == nil || !strings.Contains(err.Error(), "create git client: no auth") {
 			t.Errorf("got %v, want 'create git client: no auth'", err)
 		}
@@ -521,7 +542,7 @@ func TestRunUploadDependencyErrors(t *testing.T) {
 		deps := baseDeps()
 		gc := &fakeGitClient{err: errors.New("api 500")}
 		deps.newGitClient = func() (gitDataClient, error) { return gc, nil }
-		err := runUpload(42, []string{"f.png"}, "", false, "", "", false, io.Discard, io.Discard, deps)
+		err := runUpload(42, []string{"f.png"}, "", false, "", "", "", false, io.Discard, io.Discard, deps)
 		if err == nil || !strings.Contains(err.Error(), "push attachments: api 500") {
 			t.Errorf("got %v, want 'push attachments: api 500'", err)
 		}
@@ -530,7 +551,7 @@ func TestRunUploadDependencyErrors(t *testing.T) {
 	t.Run("newCmtClient error under --comment", func(t *testing.T) {
 		deps := baseDeps()
 		deps.newCmtClient = func() (commentClient, error) { return nil, errors.New("no auth") }
-		err := runUpload(42, []string{"f.png"}, "", true, "", "", false, io.Discard, io.Discard, deps)
+		err := runUpload(42, []string{"f.png"}, "", true, "", "", "", false, io.Discard, io.Discard, deps)
 		if err == nil || !strings.Contains(err.Error(), "create comment client: no auth") {
 			t.Errorf("got %v, want 'create comment client: no auth'", err)
 		}
@@ -540,11 +561,253 @@ func TestRunUploadDependencyErrors(t *testing.T) {
 		deps := baseDeps()
 		cc := &fakeCmtClient{err: errors.New("forbidden")}
 		deps.newCmtClient = func() (commentClient, error) { return cc, nil }
-		err := runUpload(42, []string{"f.png"}, "", true, "", "", false, io.Discard, io.Discard, deps)
+		err := runUpload(42, []string{"f.png"}, "", true, "", "", "", false, io.Discard, io.Discard, deps)
 		if err == nil || !strings.Contains(err.Error(), "upsert comment: forbidden") {
 			t.Errorf("got %v, want 'upsert comment: forbidden'", err)
 		}
 	})
+}
+
+// ---------------------------------------------------------------------
+// runUpload stdin tests — exercise the `-` filename + --name flag
+// that materialize deps.stdin into a temp file under the user-chosen
+// basename before upload.
+// ---------------------------------------------------------------------
+
+func TestRunUpload_stdin_issue_mode(t *testing.T) {
+	git := &fakeGitClient{
+		paths:           []gh.AttachmentPath{{Path: "shot.png"}},
+		sha:             "abc1234",
+		savePushContent: true,
+	}
+	deps := happyDeps(git, &fakeCmtClient{})
+	deps.stdin = strings.NewReader("PNG-BYTES")
+
+	var stdout, stderr bytes.Buffer
+	err := runUpload(42, []string{"-"}, "", false, "", "", "shot.png", false, &stdout, &stderr, deps)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !git.called {
+		t.Fatal("PushAttachments was not called")
+	}
+	if len(git.gotFiles) != 1 {
+		t.Fatalf("gotFiles = %v, want exactly one file", git.gotFiles)
+	}
+	// The temp path's basename must equal --name so filepath.Base
+	// inside PushAttachments yields the user-chosen tree-entry name.
+	if got := filepath.Base(git.gotFiles[0]); got != "shot.png" {
+		t.Errorf("temp basename = %q, want shot.png", got)
+	}
+	if got := string(git.gotPushContent["shot.png"]); got != "PNG-BYTES" {
+		t.Errorf("temp content = %q, want PNG-BYTES", got)
+	}
+	if git.gotRefPath != "uploads/issues/42" {
+		t.Errorf("refPath = %q, want uploads/issues/42", git.gotRefPath)
+	}
+	if !strings.Contains(stderr.String(), "Uploading 1 file(s) to #42 in auto/repo...") {
+		t.Errorf("stderr missing progress line: %s", stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "![shot.png]") {
+		t.Errorf("stdout missing markdown image: %s", stdout.String())
+	}
+}
+
+func TestRunUpload_stdin_key_mode(t *testing.T) {
+	git := &fakeGitClient{
+		paths:           []gh.AttachmentPath{{Path: "diagram.png"}},
+		sha:             "def5678",
+		savePushContent: true,
+	}
+	deps := happyDeps(git, &fakeCmtClient{})
+	deps.stdin = strings.NewReader("DIAGRAM-BYTES")
+
+	var stdout, stderr bytes.Buffer
+	err := runUpload(0, []string{"-"}, "", false, "", "docs/v2", "diagram.png", false, &stdout, &stderr, deps)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if git.gotRefPath != "uploads/misc/docs/v2" {
+		t.Errorf("refPath = %q, want uploads/misc/docs/v2", git.gotRefPath)
+	}
+	if got := filepath.Base(git.gotFiles[0]); got != "diagram.png" {
+		t.Errorf("temp basename = %q, want diagram.png", got)
+	}
+	if got := string(git.gotPushContent["diagram.png"]); got != "DIAGRAM-BYTES" {
+		t.Errorf("temp content = %q, want DIAGRAM-BYTES", got)
+	}
+}
+
+func TestRunUpload_stdin_with_comment(t *testing.T) {
+	git := &fakeGitClient{
+		paths: []gh.AttachmentPath{{Path: "clip.png"}},
+		sha:   "sha",
+	}
+	cmt := &fakeCmtClient{url: "https://example.com/pull/7#issuecomment-1"}
+	deps := happyDeps(git, cmt)
+	deps.stdin = strings.NewReader("CLIP")
+
+	var stdout, stderr bytes.Buffer
+	err := runUpload(7, []string{"-"}, "", true, "", "", "clip.png", false, &stdout, &stderr, deps)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !cmt.called {
+		t.Error("UpsertComment should have been called with --comment")
+	}
+	if cmt.gotNumber != 7 {
+		t.Errorf("comment number = %d, want 7", cmt.gotNumber)
+	}
+	if !strings.Contains(stderr.String(), "Commented: https://example.com/pull/7#issuecomment-1") {
+		t.Errorf("stderr missing Commented line: %s", stderr.String())
+	}
+}
+
+func TestRunUpload_stdin_empty_allowed(t *testing.T) {
+	// An empty stdin stream is a legitimate case (e.g. an empty
+	// capture) — it must produce a 0-byte file, not an error, and
+	// PushAttachments should be called normally.
+	git := &fakeGitClient{
+		paths:           []gh.AttachmentPath{{Path: "empty.png"}},
+		sha:             "sha",
+		savePushContent: true,
+	}
+	deps := happyDeps(git, &fakeCmtClient{})
+	deps.stdin = strings.NewReader("")
+
+	var stdout, stderr bytes.Buffer
+	err := runUpload(1, []string{"-"}, "", false, "", "", "empty.png", false, &stdout, &stderr, deps)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !git.called {
+		t.Error("PushAttachments should be called even for an empty stdin")
+	}
+	if got := git.gotPushContent["empty.png"]; len(got) != 0 {
+		t.Errorf("temp content = %q, want empty", got)
+	}
+}
+
+func TestRunUpload_stdin_json(t *testing.T) {
+	git := &fakeGitClient{
+		paths: []gh.AttachmentPath{{Path: "shot.png"}},
+		sha:   "abc1234",
+	}
+	deps := happyDeps(git, &fakeCmtClient{})
+	deps.stdin = strings.NewReader("PNG")
+
+	var stdout, stderr bytes.Buffer
+	err := runUpload(42, []string{"-"}, "", false, "", "", "shot.png", true, &stdout, &stderr, deps)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if stderr.Len() != 0 {
+		t.Errorf("stderr should be empty in JSON mode, got:\n%s", stderr.String())
+	}
+	var parsed uploadResult
+	if err := json.Unmarshal(stdout.Bytes(), &parsed); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\n%s", err, stdout.String())
+	}
+	if parsed.Number != 42 {
+		t.Errorf("number = %d, want 42", parsed.Number)
+	}
+	if len(parsed.Files) != 1 || parsed.Files[0].Name != "shot.png" {
+		t.Errorf("files = %+v, want [{Name:shot.png ...}]", parsed.Files)
+	}
+}
+
+func TestRunUpload_stdin_via_runWithDeps(t *testing.T) {
+	// Exercise the full flag-parse path so --name + `-` at the shell
+	// layer work end-to-end (flag registration, positional parsing,
+	// stdin wiring, temp materialization, upload).
+	git := &fakeGitClient{
+		paths:           []gh.AttachmentPath{{Path: "piped.png"}},
+		sha:             "sha",
+		savePushContent: true,
+	}
+	deps := happyDeps(git, &fakeCmtClient{})
+	deps.stdin = strings.NewReader("BYTES")
+
+	var stdout, stderr bytes.Buffer
+	code := runWithDeps([]string{"--name", "piped.png", "42", "-"}, &stdout, &stderr, deps)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0. stderr=%s", code, stderr.String())
+	}
+	if !git.called {
+		t.Error("PushAttachments was not called via runWithDeps")
+	}
+	if got := filepath.Base(git.gotFiles[0]); got != "piped.png" {
+		t.Errorf("basename = %q, want piped.png", got)
+	}
+	if got := string(git.gotPushContent["piped.png"]); got != "BYTES" {
+		t.Errorf("content = %q, want BYTES", got)
+	}
+}
+
+func TestRunUpload_stdin_arg_conflicts(t *testing.T) {
+	tests := []struct {
+		name      string
+		number    int
+		files     []string
+		nameFlag  string
+		errSubstr string
+	}{
+		{
+			name:      "--name without dash",
+			number:    42,
+			files:     []string{"file.png"},
+			nameFlag:  "custom.png",
+			errSubstr: "--name is only valid when reading from stdin",
+		},
+		{
+			name:      "dash without --name",
+			number:    42,
+			files:     []string{"-"},
+			nameFlag:  "",
+			errSubstr: "--name is required when reading from stdin",
+		},
+		{
+			name:      "dash mixed with files",
+			number:    42,
+			files:     []string{"-", "extra.png"},
+			nameFlag:  "",
+			errSubstr: "`-` must be the only file argument",
+		},
+		{
+			name:      "dash mixed with files, dash second",
+			number:    42,
+			files:     []string{"a.png", "-"},
+			nameFlag:  "",
+			errSubstr: "`-` must be the only file argument",
+		},
+		{
+			name:      "invalid name (path)",
+			number:    42,
+			files:     []string{"-"},
+			nameFlag:  "../escape.png",
+			errSubstr: "must be a basename",
+		},
+		{
+			name:      "invalid name (dot)",
+			number:    42,
+			files:     []string{"-"},
+			nameFlag:  ".",
+			errSubstr: `cannot be "."`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			deps := happyDeps(&fakeGitClient{}, &fakeCmtClient{})
+			deps.stdin = strings.NewReader("")
+			err := runUpload(tt.number, tt.files, "", false, "", "", tt.nameFlag, false, io.Discard, io.Discard, deps)
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			if !strings.Contains(err.Error(), tt.errSubstr) {
+				t.Errorf("error = %q, want substring %q", err.Error(), tt.errSubstr)
+			}
+		})
+	}
 }
 
 // ---------------------------------------------------------------------
@@ -650,7 +913,7 @@ func TestRunWithDepsFullFlow(t *testing.T) {
 		deps := happyDeps(git, &fakeCmtClient{})
 
 		var stdout, stderr bytes.Buffer
-		code := runWithDeps([]string{"42", "file.png"}, strings.NewReader(""), &stdout, &stderr, deps)
+		code := runWithDeps([]string{"42", "file.png"}, &stdout, &stderr, deps)
 		if code != 0 {
 			t.Fatalf("exit code = %d, want 0\nstderr=%s", code, stderr.String())
 		}
@@ -669,7 +932,7 @@ func TestRunWithDepsFullFlow(t *testing.T) {
 		}
 		deps := happyDeps(git, &fakeCmtClient{})
 		var stdout, stderr bytes.Buffer
-		code := runWithDeps([]string{"--key", "my-key", "f.png"}, strings.NewReader(""), &stdout, &stderr, deps)
+		code := runWithDeps([]string{"--key", "my-key", "f.png"}, &stdout, &stderr, deps)
 		if code != 0 {
 			t.Fatalf("exit code = %d, want 0\nstderr=%s", code, stderr.String())
 		}
@@ -686,7 +949,7 @@ func TestRunWithDepsFullFlow(t *testing.T) {
 		cmt := &fakeCmtClient{url: "https://example/cmt"}
 		deps := happyDeps(git, cmt)
 		var stdout, stderr bytes.Buffer
-		code := runWithDeps([]string{"--comment", "--title", "Hi", "5", "f.png"}, strings.NewReader(""), &stdout, &stderr, deps)
+		code := runWithDeps([]string{"--comment", "--title", "Hi", "5", "f.png"}, &stdout, &stderr, deps)
 		if code != 0 {
 			t.Fatalf("exit code = %d, want 0\nstderr=%s", code, stderr.String())
 		}
@@ -708,7 +971,7 @@ func TestRunWithDepsFullFlow(t *testing.T) {
 		}
 		deps := happyDeps(git, &fakeCmtClient{})
 		var stdout, stderr bytes.Buffer
-		code := runWithDeps([]string{"42", "Screen Shot 2026.png"}, strings.NewReader(""), &stdout, &stderr, deps)
+		code := runWithDeps([]string{"42", "Screen Shot 2026.png"}, &stdout, &stderr, deps)
 		if code != 0 {
 			t.Fatalf("exit = %d, want 0. stderr=%s", code, stderr.String())
 		}
@@ -732,7 +995,7 @@ func TestRunWithDepsFullFlow(t *testing.T) {
 		}
 		deps := happyDeps(git, &fakeCmtClient{})
 		var stdout, stderr bytes.Buffer
-		code := runWithDeps([]string{"f.png"}, strings.NewReader(""), &stdout, &stderr, deps)
+		code := runWithDeps([]string{"f.png"}, &stdout, &stderr, deps)
 		if code != 0 {
 			t.Fatalf("exit code = %d, want 0\nstderr=%s", code, stderr.String())
 		}
@@ -744,7 +1007,7 @@ func TestRunWithDepsFullFlow(t *testing.T) {
 	t.Run("runUpload error bubbles up as stderr + exit 1", func(t *testing.T) {
 		deps := happyDeps(&fakeGitClient{err: errors.New("bang")}, &fakeCmtClient{})
 		var stdout, stderr bytes.Buffer
-		code := runWithDeps([]string{"42", "f.png"}, strings.NewReader(""), &stdout, &stderr, deps)
+		code := runWithDeps([]string{"42", "f.png"}, &stdout, &stderr, deps)
 		if code != 1 {
 			t.Errorf("exit code = %d, want 1", code)
 		}

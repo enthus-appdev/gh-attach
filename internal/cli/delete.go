@@ -14,8 +14,9 @@ import (
 // runDelete implements the `gh attach delete` subcommand. It prompts
 // for interactive confirmation by default (suppressed with --yes) and
 // then calls gh.DeleteRef for either an issue-scoped ref (from a
-// positional NUMBER) or an ad-hoc ref (from --key KEY).
-func runDelete(args []string, stdin io.Reader, stdout, stderr io.Writer, deps runDeps) int {
+// positional NUMBER) or an ad-hoc ref (from --key KEY). Reads the
+// confirmation answer from deps.stdin.
+func runDelete(args []string, stdout, stderr io.Writer, deps runDeps) int {
 	fs := flag.NewFlagSet("gh-attach delete", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 
@@ -83,7 +84,7 @@ func runDelete(args []string, stdin io.Reader, stdout, stderr io.Writer, deps ru
 	if !*yes {
 		_, _ = fmt.Fprintf(stderr, "About to delete refs/%s in %s.\n", refPath, repo)
 		_, _ = fmt.Fprintf(stderr, "Proceed? [y/N]: ")
-		answer, err := readConfirmation(stdin)
+		answer, err := readConfirmation(deps.stdin)
 		if err != nil {
 			_, _ = fmt.Fprintf(stderr, "error: could not read confirmation (stdin closed or non-interactive) — pass --yes to skip the prompt\n")
 			return 1

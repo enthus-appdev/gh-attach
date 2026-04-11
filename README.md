@@ -46,6 +46,9 @@ gh attach --key docs/arch-diagram diagram.png
 
 # Emit a JSON result object instead of the markdown table (see below)
 gh attach --json 123 screenshot.png
+
+# Read file bytes from stdin with --name BASENAME (see "Reading from stdin" below)
+screencapture -i -t png - | gh attach --name shot.png 123 -
 ```
 
 By default `gh attach` reads the target repo from the current clone's `origin` remote. Pass `--repo OWNER/NAME` (or a full GitHub URL) to target a different repo or to run from outside any git clone. Whenever `--repo` is used, `NUMBER` or `--key` must be passed explicitly — PR auto-detection only works inside a clone of the target repo.
@@ -223,6 +226,32 @@ Uploading 1 file(s) to #123 in owner/repo...
 Uploaded:
   https://github.com/owner/repo/blob/abc1234/screenshot.png?raw=true
 ```
+
+### Reading from stdin
+
+Pass `-` as the single file argument (with `--name BASENAME`) to read file bytes from stdin instead of disk. Useful for tools that emit images to a pipe — screen capture, image processing, clipboard readers:
+
+```bash
+# macOS: interactive screen capture straight into an upload
+screencapture -i -t png - | gh attach --name shot.png 123 -
+
+# Linux / Wayland: grim + slurp region capture
+grim -g "$(slurp)" - | gh attach --name region.png 123 -
+
+# ImageMagick: resize on the fly before uploading
+magick input.png -resize 50% - | gh attach --name resized.png --key docs/diagram -
+
+# macOS: upload the current clipboard image
+pbpaste | gh attach --name clipboard.png 42 -
+```
+
+The `--name` flag is **required** when reading from stdin — it supplies the basename used for the git tree entry, the embed URL, and the markdown alt text. Stdin mode works with `--key`, `--comment`, `--json`, and `--repo` the same way a disk-backed upload does.
+
+**Rules**:
+- `-` must be the *only* file argument (mixing stdin with disk files is not supported).
+- `--name` is rejected when no `-` is present.
+- `--name` must be a basename, not a path — no `/`, no `\`, no `.` or `..`, max 255 bytes.
+- An empty stdin stream is allowed (produces a 0-byte upload), so upstream tools that pipe nothing don't cause a silent no-op.
 
 ## How it works
 

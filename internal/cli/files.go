@@ -2,8 +2,10 @@ package cli
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // expandFiles resolves globs and verifies each file exists as a regular
@@ -36,4 +38,66 @@ func expandFiles(patterns []string) ([]string, error) {
 		return nil, fmt.Errorf("no files found")
 	}
 	return files, nil
+}
+
+// validateName enforces that name is a safe basename to use when
+// materializing a stdin upload. It rejects empty strings, path
+// separators, `.` / `..`, NUL bytes, and anything longer than 255
+// bytes. The goal is a value that (a) can't escape its temp dir via
+// filepath.Join, (b) is legal on every common filesystem, and (c)
+// survives being embedded in a git tree entry and a raw-blob URL
+// without collisions or encoding weirdness.
+func validateName(name string) error {
+	if name == "" {
+		return fmt.Errorf("--name cannot be empty")
+	}
+	if len(name) > 255 {
+		return fmt.Errorf("--name must be 255 bytes or fewer (got %d)", len(name))
+	}
+	if name == "." || name == ".." {
+		return fmt.Errorf("--name cannot be %q", name)
+	}
+	if strings.ContainsAny(name, `/\`) {
+		return fmt.Errorf("--name must be a basename, not a path (got %q)", name)
+	}
+	if strings.ContainsRune(name, 0) {
+		return fmt.Errorf("--name cannot contain NUL bytes")
+	}
+	return nil
+}
+
+// materializeStdin drains stdin into a fresh file named `name` inside
+// a new temp directory and returns the path plus a cleanup closure
+// the caller should defer.
+//
+// This exists so the upload flow can support `gh attach --name X -`
+// without refactoring gh.PushAttachments to accept an io.Reader: the
+// temp path is a real file whose basename is exactly `name`, which
+// is what PushAttachments feeds to filepath.Base when building the
+// git tree entry.
+//
+// Callers must validate `name` (via validateName) before calling
+// this — materializeStdin trusts it to be a safe basename.
+func materializeStdin(stdin io.Reader, name string) (string, func(), error) {
+	tmpDir, err := os.MkdirTemp("", "gh-attach-stdin-*")
+	if err != nil {
+		return "", nil, fmt.Errorf("create temp dir: %w", err)
+	}
+	cleanup := func() { _ = os.RemoveAll(tmpDir) }
+	tmpPath := filepath.Join(tmpDir, name)
+	f, err := os.Create(tmpPath)
+	if err != nil {
+		cleanup()
+		return "", nil, fmt.Errorf("create temp file: %w", err)
+	}
+	if _, err := io.Copy(f, stdin); err != nil {
+		_ = f.Close()
+		cleanup()
+		return "", nil, fmt.Errorf("read stdin: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		cleanup()
+		return "", nil, fmt.Errorf("close temp file: %w", err)
+	}
+	return tmpPath, cleanup, nil
 }

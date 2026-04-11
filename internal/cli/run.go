@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 
 	"github.com/enthus-appdev/gh-attach/internal/gh"
@@ -58,20 +59,28 @@ type commentClient interface {
 	UpsertComment(repo *gh.Repo, prNumber int, paths []gh.AttachmentPath, commitSHA, title string) (string, error)
 }
 
-// runDeps bundles every external dependency that runUpload calls into
-// so tests can replace them with in-process fakes. Production code uses
-// defaultDeps(); tests build their own runDeps with stubs.
+// runDeps bundles every external dependency that runUpload, runList,
+// and runDelete call into so tests can replace them with in-process
+// fakes. `stdin` is in here too — it's a source of user input that
+// both the delete confirmation prompt and the upload stdin path need
+// to read, and tests need to stub with strings.NewReader(...). Putting
+// it on runDeps keeps the runWithDeps / runDelete / runUpload
+// signatures short and consistent.
+//
+// Production code uses defaultDeps(); tests build their own runDeps
+// with stubs.
 type runDeps struct {
 	resolveRepo  func(override string) (*gh.Repo, error)
 	resolvePR    func(repo *gh.Repo) (int, error)
 	newGitClient func() (gitDataClient, error)
 	newCmtClient func() (commentClient, error)
 	expandFiles  func(patterns []string) ([]string, error)
+	stdin        io.Reader
 }
 
 // defaultDeps returns the real production dependencies — the thin
-// wrappers around internal/gh and expandFiles. Tests never call this;
-// they construct runDeps with fakes directly.
+// wrappers around internal/gh, expandFiles, and os.Stdin. Tests never
+// call this; they construct runDeps with fakes directly.
 func defaultDeps() runDeps {
 	return runDeps{
 		resolveRepo: gh.ResolveRepo,
@@ -83,25 +92,28 @@ func defaultDeps() runDeps {
 			return gh.NewCommentClient()
 		},
 		expandFiles: expandFiles,
+		stdin:       os.Stdin,
 	}
 }
 
 // Run parses args, dispatches to the right subcommand (or the default
-// upload flow), and returns the process exit code. stdin is used by
-// subcommands that need interactive confirmation (delete). stdout
-// receives primary data output (rendered markdown, list output);
-// stderr receives progress, prompts, URL lists, and errors. This is
-// the function the command entry point calls; production code always
-// goes through defaultDeps.
+// upload flow), and returns the process exit code. stdin is threaded
+// through defaultDeps so subcommands that need to read user input
+// (delete confirmation prompts, upload from `-`) can reach it via
+// deps.stdin. stdout receives primary data output (rendered markdown,
+// list output, JSON); stderr receives progress, prompts, URL lists,
+// and errors.
 func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
-	return runWithDeps(args, stdin, stdout, stderr, defaultDeps())
+	deps := defaultDeps()
+	deps.stdin = stdin
+	return runWithDeps(args, stdout, stderr, deps)
 }
 
 // runWithDeps is the testable core of Run: it accepts the dependency
 // struct so unit tests can inject fakes for the repo/PR resolvers, the
-// git data client, the comment client, and the file expander. Run()
-// calls it with defaultDeps() for real production runs.
-func runWithDeps(args []string, stdin io.Reader, stdout, stderr io.Writer, deps runDeps) int {
+// git data client, the comment client, the file expander, and stdin.
+// Run() calls it with defaultDeps() for real production runs.
+func runWithDeps(args []string, stdout, stderr io.Writer, deps runDeps) int {
 	// Subcommand routing — if the first arg is exactly a known
 	// subcommand name and not a flag, dispatch to it. Otherwise fall
 	// through to the default upload flow. Users who want to upload a
@@ -112,7 +124,7 @@ func runWithDeps(args []string, stdin io.Reader, stdout, stderr io.Writer, deps 
 		case "list":
 			return runList(args[1:], stdout, stderr, deps)
 		case "delete":
-			return runDelete(args[1:], stdin, stdout, stderr, deps)
+			return runDelete(args[1:], stdout, stderr, deps)
 		}
 	}
 
@@ -124,12 +136,15 @@ func runWithDeps(args []string, stdin io.Reader, stdout, stderr io.Writer, deps 
 	repoOverride := fs.String("repo", "", "Target repo as OWNER/NAME or a GitHub URL (default: origin of the current clone)")
 	key := fs.String("key", "", "Upload to an ad-hoc key under refs/uploads/misc/KEY instead of a PR/issue (mutually exclusive with NUMBER and --comment)")
 	asJSON := fs.Bool("json", false, "Emit a JSON result object instead of the markdown table (suppresses stderr progress + URL list)")
+	name := fs.String("name", "", "Basename to use when reading file bytes from stdin (`-`). Required with stdin, rejected otherwise.")
 
 	fs.Usage = func() {
 		_, _ = fmt.Fprintf(stderr, "Upload images to a GitHub PR or issue and print embeddable markdown to stdout.\n\n")
 		_, _ = fmt.Fprintf(stderr, "Usage:\n")
 		_, _ = fmt.Fprintf(stderr, "  gh attach [flags] [NUMBER] FILE...\n")
 		_, _ = fmt.Fprintf(stderr, "  gh attach [flags] --key KEY FILE...\n")
+		_, _ = fmt.Fprintf(stderr, "  gh attach [flags] --name BASENAME [NUMBER] -\n")
+		_, _ = fmt.Fprintf(stderr, "  gh attach [flags] --name BASENAME --key KEY -\n")
 		_, _ = fmt.Fprintf(stderr, "  gh attach list   [flags]\n")
 		_, _ = fmt.Fprintf(stderr, "  gh attach delete [flags] NUMBER\n")
 		_, _ = fmt.Fprintf(stderr, "  gh attach delete [flags] --key KEY\n\n")
@@ -139,6 +154,8 @@ func runWithDeps(args []string, stdin io.Reader, stdout, stderr io.Writer, deps 
 		_, _ = fmt.Fprintf(stderr, "not-yet-created issue. Ad-hoc uploads are stored under refs/uploads/misc/KEY\n")
 		_, _ = fmt.Fprintf(stderr, "and are NOT auto-cleaned by the cleanup workflow. Use `gh attach list` to\n")
 		_, _ = fmt.Fprintf(stderr, "inspect and `gh attach delete` to remove them.\n\n")
+		_, _ = fmt.Fprintf(stderr, "Pass `-` as the single FILE argument with --name BASENAME to read file\n")
+		_, _ = fmt.Fprintf(stderr, "bytes from stdin (e.g. `screencapture -t png - | gh attach --name shot.png 42 -`).\n\n")
 		_, _ = fmt.Fprintf(stderr, "By default, the rendered markdown is written to stdout and no comment is\n")
 		_, _ = fmt.Fprintf(stderr, "posted. Pass --comment to also upsert the markdown as a PR/issue comment.\n\n")
 		_, _ = fmt.Fprintf(stderr, "Flags:\n")
@@ -162,7 +179,7 @@ func runWithDeps(args []string, stdin io.Reader, stdout, stderr io.Writer, deps 
 		return 1
 	}
 
-	if err := runUpload(number, filePaths, *title, *postComment, *repoOverride, *key, *asJSON, stdout, stderr, deps); err != nil {
+	if err := runUpload(number, filePaths, *title, *postComment, *repoOverride, *key, *name, *asJSON, stdout, stderr, deps); err != nil {
 		_, _ = fmt.Fprintf(stderr, "error: %v\n", err)
 		return 1
 	}
@@ -183,7 +200,7 @@ func runWithDeps(args []string, stdin io.Reader, stdout, stderr io.Writer, deps 
 // should break the operation into two steps: `gh attach ...` then
 // `gh pr comment` — a --comment failure here still exits 1 with no
 // JSON on stdout, by design.
-func runUpload(number int, filePaths []string, title string, postComment bool, repoOverride, key string, asJSON bool, stdout, stderr io.Writer, deps runDeps) error {
+func runUpload(number int, filePaths []string, title string, postComment bool, repoOverride, key, name string, asJSON bool, stdout, stderr io.Writer, deps runDeps) error {
 	// Argument conflicts — fail fast before any network work.
 	if number != 0 && key != "" {
 		return fmt.Errorf("cannot combine NUMBER with --key — they target different ref namespaces")
@@ -193,6 +210,30 @@ func runUpload(number int, filePaths []string, title string, postComment bool, r
 	}
 	if key != "" {
 		if err := gh.ValidateKey(key); err != nil {
+			return err
+		}
+	}
+
+	// Stdin mode detection + validation. Exactly one file arg of "-"
+	// means "read file bytes from deps.stdin"; anything else is
+	// either a normal upload or a user error we want to flag
+	// explicitly (rather than letting expandFiles produce an opaque
+	// "no files matched" result).
+	useStdin := len(filePaths) == 1 && filePaths[0] == "-"
+	if !useStdin {
+		for _, p := range filePaths {
+			if p == "-" {
+				return fmt.Errorf("`-` must be the only file argument when reading from stdin")
+			}
+		}
+		if name != "" {
+			return fmt.Errorf("--name is only valid when reading from stdin (pass `-` as the file argument)")
+		}
+	} else {
+		if name == "" {
+			return fmt.Errorf("--name is required when reading from stdin (`-`)")
+		}
+		if err := validateName(name); err != nil {
 			return err
 		}
 	}
@@ -221,10 +262,24 @@ func runUpload(number int, filePaths []string, title string, postComment bool, r
 		}
 	}
 
-	// Expand globs and validate files exist
-	files, err := deps.expandFiles(filePaths)
-	if err != nil {
-		return err
+	// Expand globs and validate files exist — or, in stdin mode,
+	// drain stdin into a temp file under the user-chosen basename.
+	// Skipping expandFiles in stdin mode avoids interpreting `name`
+	// as a glob pattern and keeps gh.PushAttachments unchanged
+	// (it still receives a real filesystem path).
+	var files []string
+	if useStdin {
+		tmpPath, cleanup, stdinErr := materializeStdin(deps.stdin, name)
+		if stdinErr != nil {
+			return stdinErr
+		}
+		defer cleanup()
+		files = []string{tmpPath}
+	} else {
+		files, err = deps.expandFiles(filePaths)
+		if err != nil {
+			return err
+		}
 	}
 
 	// Build the ref path, commit message, and user-facing target

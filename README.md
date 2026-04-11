@@ -49,6 +49,9 @@ gh attach --json 123 screenshot.png
 
 # Read file bytes from stdin with --name BASENAME (see "Reading from stdin" below)
 screencapture -i -t png - | gh attach --name shot.png 123 -
+
+# Download files back to disk (see "gh attach get" below)
+gh attach get 123 --output ./restored
 ```
 
 By default `gh attach` reads the target repo from the current clone's `origin` remote. Pass `--repo OWNER/NAME` (or a full GitHub URL) to target a different repo or to run from outside any git clone. Whenever `--repo` is used, `NUMBER` or `--key` must be passed explicitly — PR auto-detection only works inside a clone of the target repo.
@@ -195,6 +198,77 @@ gh attach delete --yes --key design-v2
 The confirmation prompt reads from stdin, so running `gh attach delete` in a non-interactive context (CI, piped input) without `--yes` will fail with a clear error asking you to pass `--yes`.
 
 Deleting a ref that doesn't exist exits 1 with `error: refs/... not found in OWNER/NAME`. Aborting the confirmation prompt (answering `n` or just pressing enter) exits 0 with `Aborted` — it's not an error, just a no-op.
+
+### `gh attach get`
+
+Download the files stored under an upload ref to the local disk — the exact inverse of the upload flow. Takes either a positional `NUMBER` (to fetch from `refs/uploads/issues/NUMBER`) or `--key KEY` (to fetch from `refs/uploads/misc/KEY`).
+
+```bash
+# Pull every file for PR/issue #42 into the current directory
+gh attach get 42
+
+# Pull into a specific directory (created if missing)
+gh attach get 42 --output ./restored
+
+# Pull an ad-hoc upload
+gh attach get --key design-v2 --output ./mockups
+
+# Overwrite existing files
+gh attach get 42 --force
+
+# Auto-detect PR from the current branch
+gh attach get
+
+# JSON result for scripting
+gh attach get 42 --json | jq -r '.files[].path'
+```
+
+**Flags**:
+- `--repo OWNER/NAME` — target a specific repo (NUMBER or `--key` must be explicit when `--repo` is used)
+- `--key KEY` — ad-hoc source (mutually exclusive with positional `NUMBER`)
+- `--output DIR` — target directory (default: `.`; created if missing, including intermediate parents)
+- `--force` — overwrite existing files in the output directory (default: error on conflict)
+- `--json` — emit a `downloadResult` JSON object on stdout instead of text
+
+**Pre-flight atomicity**: if any target file already exists without `--force`, `gh attach get` fails **before writing any files** and lists every conflict. You never end up with a half-populated output directory from a failed run.
+
+**Output** (text mode): written file paths go to stdout (one per line) so pipelines like `gh attach get 42 | xargs -I {} open {}` just work. A per-file line plus a summary goes to stderr so interactive users see the narrative:
+
+```
+Downloading from #42 in owner/repo...
+  shot.png → ./shot.png (850 B)
+  note.md → ./note.md (1.2 KiB)
+Downloaded 2 file(s) to .
+```
+
+**JSON mode** suppresses stderr entirely and emits a single `downloadResult` object on stdout:
+
+```bash
+$ gh attach get 42 --json | jq
+{
+  "repo": "owner/repo",
+  "target": "#42",
+  "namespace": "issue",
+  "number": 42,
+  "ref": "refs/uploads/issues/42",
+  "sha": "abc1234def5678",
+  "output_dir": ".",
+  "files": [
+    {
+      "name": "shot.png",
+      "path": "shot.png",
+      "size": 850,
+      "sha": "blob-sha-1"
+    }
+  ]
+}
+```
+
+Use cases:
+- **Round-trip attachments** across a fresh clone (`gh attach get --key docs/hero --output ./images`)
+- **Scripted cleanup** before closing: pull the attachments locally as a backup, then `gh attach delete`
+- **Review workflow**: fetch a contributor's screenshots from a PR into a temp dir and inspect them side-by-side
+- **Migration**: read the bytes out of one repo and push them to another with the upload flow
 
 ### Composing with other tools
 

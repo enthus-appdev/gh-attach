@@ -45,13 +45,14 @@ type uploadFile struct {
 // gitDataClient is the subset of gh.GitDataClient that the cli layer
 // needs. Defined as an interface here so tests can swap in a fake
 // client that returns canned results without making HTTP calls. The
-// real *gh.GitDataClient satisfies all three methods; individual test
+// real *gh.GitDataClient satisfies all four methods; individual test
 // fakes typically only populate the one(s) the test under scrutiny
 // actually exercises.
 type gitDataClient interface {
 	PushAttachments(repo *gh.Repo, refPath, commitMessage string, files []string) ([]gh.AttachmentPath, string, error)
 	ListRefs(repo *gh.Repo, subPrefix string) ([]gh.RefEntry, error)
 	DeleteRef(repo *gh.Repo, refPath string) error
+	GetAttachments(repo *gh.Repo, refPath string) ([]gh.Attachment, string, error)
 }
 
 // commentClient is the subset of gh.CommentClient that runUpload needs.
@@ -151,6 +152,8 @@ func runWithDeps(args []string, stdout, stderr io.Writer, deps runDeps) int {
 			return runList(args[1:], stdout, stderr, deps)
 		case "delete":
 			return runDelete(args[1:], stdout, stderr, deps)
+		case "get":
+			return runGet(args[1:], stdout, stderr, deps)
 		}
 	}
 
@@ -173,7 +176,9 @@ func runWithDeps(args []string, stdout, stderr io.Writer, deps runDeps) int {
 		_, _ = fmt.Fprintf(stderr, "  gh attach [flags] --name BASENAME --key KEY -\n")
 		_, _ = fmt.Fprintf(stderr, "  gh attach list   [flags]\n")
 		_, _ = fmt.Fprintf(stderr, "  gh attach delete [flags] NUMBER\n")
-		_, _ = fmt.Fprintf(stderr, "  gh attach delete [flags] --key KEY\n\n")
+		_, _ = fmt.Fprintf(stderr, "  gh attach delete [flags] --key KEY\n")
+		_, _ = fmt.Fprintf(stderr, "  gh attach get    [flags] [NUMBER]\n")
+		_, _ = fmt.Fprintf(stderr, "  gh attach get    [flags] --key KEY\n\n")
 		_, _ = fmt.Fprintf(stderr, "If NUMBER is omitted on upload, it is auto-detected as a PR from the current branch.\n")
 		_, _ = fmt.Fprintf(stderr, "NUMBER or --key must be passed explicitly whenever --repo is used.\n\n")
 		_, _ = fmt.Fprintf(stderr, "Use --key to upload without a PR/issue — e.g. for a README image or a\n")

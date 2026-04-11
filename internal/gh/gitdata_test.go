@@ -1,12 +1,16 @@
 package gh
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -913,5 +917,438 @@ func TestDeleteRef(t *testing.T) {
 			t.Fatal("expected network error")
 		}
 	})
+}
+
+// ---------------------------------------------------------------------
+// GetAttachments — walks ref → commit → tree → blobs and returns raw
+// bytes. Tests cover the happy paths (single + multi file), the
+// not-found fast-path, and the decode/encoding failure modes so future
+// edits can't silently break the exact inverse of PushAttachments.
+// ---------------------------------------------------------------------
+
+// getAttachmentsMux builds an httptest handler that serves a ref →
+// commit → tree → blobs chain for `refPath` given a set of (basename,
+// content) pairs. Each basename gets a synthetic blob SHA derived
+// from its name so test assertions can reference them directly.
+func getAttachmentsMux(t *testing.T, refPath string, files map[string]string) (http.Handler, *[]string) {
+	t.Helper()
+	mux := http.NewServeMux()
+	var calls []string
+
+	mux.HandleFunc(fmt.Sprintf("GET /repos/owner/repo/git/ref/%s", refPath), func(w http.ResponseWriter, _ *http.Request) {
+		calls = append(calls, "GET ref")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"object": map[string]string{"sha": "tip-commit-sha"},
+		})
+	})
+	mux.HandleFunc("GET /repos/owner/repo/git/commits/tip-commit-sha", func(w http.ResponseWriter, _ *http.Request) {
+		calls = append(calls, "GET commit")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"tree": map[string]string{"sha": "tree-sha-1"},
+		})
+	})
+	mux.HandleFunc("GET /repos/owner/repo/git/trees/tree-sha-1", func(w http.ResponseWriter, _ *http.Request) {
+		calls = append(calls, "GET tree")
+		type entry struct {
+			Path string `json:"path"`
+			Mode string `json:"mode"`
+			Type string `json:"type"`
+			SHA  string `json:"sha"`
+			Size int64  `json:"size"`
+		}
+		// Stable iteration order for assertions: sort by path.
+		names := make([]string, 0, len(files))
+		for n := range files {
+			names = append(names, n)
+		}
+		sort.Strings(names)
+		entries := make([]entry, 0, len(names))
+		for _, n := range names {
+			entries = append(entries, entry{
+				Path: n,
+				Mode: "100644",
+				Type: "blob",
+				SHA:  "blob-" + n,
+				Size: int64(len(files[n])),
+			})
+		}
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"tree": entries})
+	})
+	for name, content := range files {
+		name, content := name, content
+		mux.HandleFunc(fmt.Sprintf("GET /repos/owner/repo/git/blobs/blob-%s", name), func(w http.ResponseWriter, _ *http.Request) {
+			calls = append(calls, "GET blob "+name)
+			// Use line-wrapped base64 to match GitHub's real response
+			// shape (60-column lines) — stripWhitespace must handle it.
+			enc := base64.StdEncoding.EncodeToString([]byte(content))
+			wrapped := ""
+			for i := 0; i < len(enc); i += 60 {
+				end := i + 60
+				if end > len(enc) {
+					end = len(enc)
+				}
+				wrapped += enc[i:end] + "\n"
+			}
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"sha":      "blob-" + name,
+				"size":     len(content),
+				"content":  wrapped,
+				"encoding": "base64",
+			})
+		})
+	}
+	return mux, &calls
+}
+
+func TestGetAttachments_single_file(t *testing.T) {
+	mux, calls := getAttachmentsMux(t, "uploads/issues/42", map[string]string{
+		"shot.png": "PNG-BYTES-FOR-SHOT",
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	client := &GitDataClient{BaseURL: srv.URL, Token: "t"}
+	repo := &Repo{Owner: "owner", Name: "repo"}
+	attachments, commitSHA, err := client.GetAttachments(repo, "uploads/issues/42")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if commitSHA != "tip-commit-sha" {
+		t.Errorf("commitSHA = %q, want tip-commit-sha", commitSHA)
+	}
+	if len(attachments) != 1 {
+		t.Fatalf("attachments = %v, want 1 entry", attachments)
+	}
+	got := attachments[0]
+	if got.Path != "shot.png" {
+		t.Errorf("path = %q, want shot.png", got.Path)
+	}
+	if string(got.Content) != "PNG-BYTES-FOR-SHOT" {
+		t.Errorf("content = %q, want %q", got.Content, "PNG-BYTES-FOR-SHOT")
+	}
+	if got.SHA != "blob-shot.png" {
+		t.Errorf("blob SHA = %q, want blob-shot.png", got.SHA)
+	}
+	if got.Size != int64(len("PNG-BYTES-FOR-SHOT")) {
+		t.Errorf("size = %d, want %d", got.Size, len("PNG-BYTES-FOR-SHOT"))
+	}
+
+	expectedCalls := []string{"GET ref", "GET commit", "GET tree", "GET blob shot.png"}
+	if len(*calls) != len(expectedCalls) {
+		t.Fatalf("calls = %v, want %v", *calls, expectedCalls)
+	}
+	for i, c := range *calls {
+		if c != expectedCalls[i] {
+			t.Errorf("call[%d] = %q, want %q", i, c, expectedCalls[i])
+		}
+	}
+}
+
+func TestGetAttachments_multiple_files(t *testing.T) {
+	mux, _ := getAttachmentsMux(t, "uploads/misc/design-v2", map[string]string{
+		"before.png": "BEFORE-BYTES",
+		"after.png":  "AFTER-BYTES",
+		"diagram.md": "# Diagram\n\ntext here",
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	client := &GitDataClient{BaseURL: srv.URL, Token: "t"}
+	attachments, _, err := client.GetAttachments(&Repo{Owner: "owner", Name: "repo"}, "uploads/misc/design-v2")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(attachments) != 3 {
+		t.Fatalf("len = %d, want 3", len(attachments))
+	}
+	// getAttachmentsMux sorts tree entries by path, so expected order is
+	// after.png, before.png, diagram.md.
+	got := map[string]string{}
+	for _, a := range attachments {
+		got[a.Path] = string(a.Content)
+	}
+	want := map[string]string{
+		"before.png": "BEFORE-BYTES",
+		"after.png":  "AFTER-BYTES",
+		"diagram.md": "# Diagram\n\ntext here",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
+func TestGetAttachments_ref_not_found(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /repos/owner/repo/git/ref/uploads/issues/999", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	client := &GitDataClient{BaseURL: srv.URL, Token: "t"}
+	attachments, sha, err := client.GetAttachments(&Repo{Owner: "owner", Name: "repo"}, "uploads/issues/999")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("err = %v, want errors.Is(err, ErrNotFound) = true", err)
+	}
+	if attachments != nil {
+		t.Errorf("attachments = %v, want nil", attachments)
+	}
+	if sha != "" {
+		t.Errorf("sha = %q, want empty", sha)
+	}
+}
+
+func TestGetAttachments_skips_non_blob_entries(t *testing.T) {
+	// A tree that contains a subdirectory entry alongside a real blob.
+	// GetAttachments must silently skip the non-blob so we don't
+	// attempt to fetch a subtree as a blob and 404.
+	mux := http.NewServeMux()
+	var blobFetched bool
+
+	mux.HandleFunc("GET /repos/owner/repo/git/ref/uploads/issues/1", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"object": map[string]string{"sha": "tip-commit-sha"},
+		})
+	})
+	mux.HandleFunc("GET /repos/owner/repo/git/commits/tip-commit-sha", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"tree": map[string]string{"sha": "tree-sha-1"},
+		})
+	})
+	mux.HandleFunc("GET /repos/owner/repo/git/trees/tree-sha-1", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"tree": []map[string]interface{}{
+				{"path": "subdir", "mode": "040000", "type": "tree", "sha": "subtree-sha"},
+				{"path": "shot.png", "mode": "100644", "type": "blob", "sha": "blob-sha", "size": 3},
+			},
+		})
+	})
+	mux.HandleFunc("GET /repos/owner/repo/git/blobs/blob-sha", func(w http.ResponseWriter, _ *http.Request) {
+		blobFetched = true
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"sha":      "blob-sha",
+			"size":     3,
+			"content":  base64.StdEncoding.EncodeToString([]byte("abc")),
+			"encoding": "base64",
+		})
+	})
+	mux.HandleFunc("GET /repos/owner/repo/git/blobs/subtree-sha", func(_ http.ResponseWriter, _ *http.Request) {
+		t.Fatal("blob fetch should not be attempted for subtree entries")
+	})
+
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	client := &GitDataClient{BaseURL: srv.URL, Token: "t"}
+	attachments, _, err := client.GetAttachments(&Repo{Owner: "owner", Name: "repo"}, "uploads/issues/1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !blobFetched {
+		t.Error("expected blob-sha to be fetched")
+	}
+	if len(attachments) != 1 {
+		t.Fatalf("len = %d, want 1 (subtree should be skipped)", len(attachments))
+	}
+	if attachments[0].Path != "shot.png" {
+		t.Errorf("path = %q, want shot.png", attachments[0].Path)
+	}
+}
+
+func TestGetAttachments_rejects_non_base64_encoding(t *testing.T) {
+	// A blob response with encoding: "utf-8" (GitHub does this for
+	// small text blobs if you don't set the Accept header — shouldn't
+	// happen for us but we should fail loud if it ever does).
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /repos/owner/repo/git/ref/uploads/issues/1", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"object": map[string]string{"sha": "c"}})
+	})
+	mux.HandleFunc("GET /repos/owner/repo/git/commits/c", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"tree": map[string]string{"sha": "t"}})
+	})
+	mux.HandleFunc("GET /repos/owner/repo/git/trees/t", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"tree": []map[string]interface{}{
+			{"path": "f", "mode": "100644", "type": "blob", "sha": "b"},
+		}})
+	})
+	mux.HandleFunc("GET /repos/owner/repo/git/blobs/b", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"content":  "hello",
+			"encoding": "utf-8",
+		})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	client := &GitDataClient{BaseURL: srv.URL, Token: "t"}
+	_, _, err := client.GetAttachments(&Repo{Owner: "owner", Name: "repo"}, "uploads/issues/1")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), `unexpected encoding "utf-8"`) {
+		t.Errorf("err = %v, want 'unexpected encoding' substring", err)
+	}
+}
+
+func TestGetAttachments_rejects_invalid_base64(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /repos/owner/repo/git/ref/uploads/issues/1", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"object": map[string]string{"sha": "c"}})
+	})
+	mux.HandleFunc("GET /repos/owner/repo/git/commits/c", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"tree": map[string]string{"sha": "t"}})
+	})
+	mux.HandleFunc("GET /repos/owner/repo/git/trees/t", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"tree": []map[string]interface{}{
+			{"path": "f", "mode": "100644", "type": "blob", "sha": "b"},
+		}})
+	})
+	mux.HandleFunc("GET /repos/owner/repo/git/blobs/b", func(w http.ResponseWriter, _ *http.Request) {
+		// Invalid base64 — `!@#$` are not in the base64 alphabet.
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"content":  "!@#$",
+			"encoding": "base64",
+		})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	client := &GitDataClient{BaseURL: srv.URL, Token: "t"}
+	_, _, err := client.GetAttachments(&Repo{Owner: "owner", Name: "repo"}, "uploads/issues/1")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "decode blob") {
+		t.Errorf("err = %v, want 'decode blob' substring", err)
+	}
+}
+
+func TestGetAttachments_commit_fetch_error(t *testing.T) {
+	// Ref resolves fine, but the commit fetch 500s. Confirms the error
+	// is wrapped with "get commit:" prefix so the CLI layer can
+	// surface it usefully.
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /repos/owner/repo/git/ref/uploads/issues/1", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"object": map[string]string{"sha": "c"}})
+	})
+	mux.HandleFunc("GET /repos/owner/repo/git/commits/c", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"message":"boom"}`))
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	client := &GitDataClient{BaseURL: srv.URL, Token: "t"}
+	_, _, err := client.GetAttachments(&Repo{Owner: "owner", Name: "repo"}, "uploads/issues/1")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "get commit:") {
+		t.Errorf("err = %v, want 'get commit:' prefix", err)
+	}
+}
+
+func TestGetAttachments_ref_non_404_error(t *testing.T) {
+	// Step-1 ref GET returns 500 (not 404). Confirms the non-404
+	// branch wraps with "get ref:" instead of returning ErrNotFound.
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /repos/owner/repo/git/ref/uploads/issues/1", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"message":"internal error"}`))
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	client := &GitDataClient{BaseURL: srv.URL, Token: "t"}
+	_, _, err := client.GetAttachments(&Repo{Owner: "owner", Name: "repo"}, "uploads/issues/1")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if errors.Is(err, ErrNotFound) {
+		t.Errorf("err = %v, should NOT match ErrNotFound", err)
+	}
+	if !strings.Contains(err.Error(), "get ref:") {
+		t.Errorf("err = %v, want 'get ref:' prefix", err)
+	}
+}
+
+func TestGetAttachments_tree_fetch_error(t *testing.T) {
+	// Steps 1 + 2 succeed, the tree GET 500s. Confirms the error
+	// wraps with "get tree:" so callers can tell which step broke.
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /repos/owner/repo/git/ref/uploads/issues/1", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"object": map[string]string{"sha": "c"}})
+	})
+	mux.HandleFunc("GET /repos/owner/repo/git/commits/c", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"tree": map[string]string{"sha": "t"}})
+	})
+	mux.HandleFunc("GET /repos/owner/repo/git/trees/t", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	client := &GitDataClient{BaseURL: srv.URL, Token: "t"}
+	_, _, err := client.GetAttachments(&Repo{Owner: "owner", Name: "repo"}, "uploads/issues/1")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "get tree:") {
+		t.Errorf("err = %v, want 'get tree:' prefix", err)
+	}
+}
+
+func TestGetAttachments_blob_fetch_error(t *testing.T) {
+	// Steps 1-3 succeed with one blob entry; the blob GET 500s.
+	// Confirms the per-blob error is wrapped with "get blob ..." and
+	// includes the blob SHA + path for debugging.
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /repos/owner/repo/git/ref/uploads/issues/1", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"object": map[string]string{"sha": "c"}})
+	})
+	mux.HandleFunc("GET /repos/owner/repo/git/commits/c", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"tree": map[string]string{"sha": "t"}})
+	})
+	mux.HandleFunc("GET /repos/owner/repo/git/trees/t", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"tree": []map[string]interface{}{
+			{"path": "shot.png", "mode": "100644", "type": "blob", "sha": "b"},
+		}})
+	})
+	mux.HandleFunc("GET /repos/owner/repo/git/blobs/b", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	client := &GitDataClient{BaseURL: srv.URL, Token: "t"}
+	_, _, err := client.GetAttachments(&Repo{Owner: "owner", Name: "repo"}, "uploads/issues/1")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "get blob b (shot.png):") {
+		t.Errorf("err = %v, want 'get blob b (shot.png):' prefix", err)
+	}
+}
+
+// TestStripWhitespace exercises the small whitespace-stripping helper
+// that handles GitHub's 60-column-wrapped base64 payloads.
+func TestStripWhitespace(t *testing.T) {
+	tests := []struct {
+		in, want string
+	}{
+		{"", ""},
+		{"abc", "abc"},
+		{"a b\tc", "abc"},
+		{"line1\nline2\r\nline3", "line1line2line3"},
+		{"  \t\n", ""},
+	}
+	for _, tt := range tests {
+		if got := stripWhitespace(tt.in); got != tt.want {
+			t.Errorf("stripWhitespace(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
 }
 

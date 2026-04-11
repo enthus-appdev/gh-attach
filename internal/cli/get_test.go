@@ -544,8 +544,18 @@ func TestRunGet_subcommand_routing(t *testing.T) {
 }
 
 // TestHumanizeBytes exercises the byte-formatting helper directly so
-// its boundary cases (0 B, 1 KiB, GiB) are pinned.
+// its boundary cases are pinned and extra-large values don't fall
+// off the end of the units slice (int64 goes up to ~8 EiB, and
+// humanizeBytes must not panic anywhere in that range).
 func TestHumanizeBytes(t *testing.T) {
+	const (
+		kib = int64(1024)
+		mib = kib * 1024
+		gib = mib * 1024
+		tib = gib * 1024
+		pib = tib * 1024
+		eib = pib * 1024
+	)
 	tests := []struct {
 		in   int64
 		want string
@@ -553,10 +563,15 @@ func TestHumanizeBytes(t *testing.T) {
 		{0, "0 B"},
 		{1, "1 B"},
 		{1023, "1023 B"},
-		{1024, "1.0 KiB"},
-		{1536, "1.5 KiB"},
-		{1024 * 1024, "1.0 MiB"},
-		{1024 * 1024 * 1024, "1.0 GiB"},
+		{kib, "1.0 KiB"},
+		{kib + kib/2, "1.5 KiB"},
+		{mib, "1.0 MiB"},
+		{gib, "1.0 GiB"},
+		{tib, "1.0 TiB"},
+		{pib, "1.0 PiB"},
+		{eib, "1.0 EiB"},
+		// int64 max (~8 EiB) must render without panicking.
+		{1<<63 - 1, "8.0 EiB"},
 	}
 	for _, tt := range tests {
 		if got := humanizeBytes(tt.in); got != tt.want {

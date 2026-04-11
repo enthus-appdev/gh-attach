@@ -250,10 +250,17 @@ func runGet(args []string, stdout, stderr io.Writer, deps runDeps) int {
 	return 0
 }
 
-// humanizeBytes renders a byte count as B / KiB / MiB / GiB using
-// binary (1024) units. Chosen for consistency with `ls -lh` /
-// `du -h`. Values below 1 KiB show the raw byte count with a "B"
-// suffix; larger values use one decimal place.
+// humanizeBytes renders a byte count as B / KiB / MiB / GiB / TiB /
+// PiB / EiB using binary (1024) units. Chosen for consistency with
+// `ls -lh` / `du -h`. Values below 1 KiB show the raw byte count
+// with a "B" suffix; larger values use one decimal place.
+//
+// The units slice covers the full int64 range: int64 maxes out at
+// 2^63 - 1 ≈ 8 EiB, and the loop's exp can reach at most 5 for any
+// representable byte count, so units[exp] is always in bounds.
+// PiB/EiB are overkill for screenshots but cheap to include and
+// eliminate any risk of an out-of-bounds panic if a future caller
+// passes a much larger size.
 func humanizeBytes(n int64) string {
 	const kib = 1024
 	if n < kib {
@@ -264,6 +271,6 @@ func humanizeBytes(n int64) string {
 		div *= kib
 		exp++
 	}
-	units := []string{"KiB", "MiB", "GiB", "TiB"}
+	units := []string{"KiB", "MiB", "GiB", "TiB", "PiB", "EiB"}
 	return fmt.Sprintf("%.1f %s", float64(n)/float64(div), units[exp])
 }

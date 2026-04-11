@@ -9,21 +9,24 @@ import (
 	"github.com/enthus-appdev/gh-attach/internal/gh"
 )
 
-// deleteDeps builds a runDeps where resolveRepo returns a canned repo
-// and newGitClient returns the passed fakeGitClient.
+// deleteDeps builds a runDeps where resolveRepo returns a canned repo,
+// newGitClient returns the passed fakeGitClient, and stdin defaults to
+// an empty reader (tests that exercise the confirmation prompt replace
+// it with strings.NewReader("y\n") or similar).
 func deleteDeps(gc *fakeGitClient) runDeps {
 	return runDeps{
 		resolveRepo: func(override string) (*gh.Repo, error) {
 			return &gh.Repo{Owner: "owner", Name: "repo"}, nil
 		},
 		newGitClient: func() (gitDataClient, error) { return gc, nil },
+		stdin:        strings.NewReader(""),
 	}
 }
 
 func TestRunDelete_force_issue(t *testing.T) {
 	gc := &fakeGitClient{}
 	var stdout, stderr bytes.Buffer
-	code := runDelete([]string{"--yes", "42"}, strings.NewReader(""), &stdout, &stderr, deleteDeps(gc))
+	code := runDelete([]string{"--yes", "42"}, &stdout, &stderr, deleteDeps(gc))
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0. stderr=%s", code, stderr.String())
 	}
@@ -41,7 +44,7 @@ func TestRunDelete_force_issue(t *testing.T) {
 func TestRunDelete_force_key(t *testing.T) {
 	gc := &fakeGitClient{}
 	var stdout, stderr bytes.Buffer
-	code := runDelete([]string{"--yes", "--key", "design-v2"}, strings.NewReader(""), &stdout, &stderr, deleteDeps(gc))
+	code := runDelete([]string{"--yes", "--key", "design-v2"}, &stdout, &stderr, deleteDeps(gc))
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0. stderr=%s", code, stderr.String())
 	}
@@ -55,8 +58,10 @@ func TestRunDelete_confirm_yes_variants(t *testing.T) {
 	for _, answer := range []string{"y\n", "Y\n", "yes\n", "YES\n", "Yes\n"} {
 		t.Run("answer="+strings.TrimSpace(answer), func(t *testing.T) {
 			gc := &fakeGitClient{}
+			deps := deleteDeps(gc)
+			deps.stdin = strings.NewReader(answer)
 			var stdout, stderr bytes.Buffer
-			code := runDelete([]string{"42"}, strings.NewReader(answer), &stdout, &stderr, deleteDeps(gc))
+			code := runDelete([]string{"42"}, &stdout, &stderr, deps)
 			if code != 0 {
 				t.Fatalf("exit = %d, want 0", code)
 			}
@@ -72,8 +77,10 @@ func TestRunDelete_confirm_no_variants(t *testing.T) {
 	for _, answer := range []string{"n\n", "no\n", "\n", "maybe\n", "idk\n"} {
 		t.Run("answer="+strings.TrimSpace(answer), func(t *testing.T) {
 			gc := &fakeGitClient{}
+			deps := deleteDeps(gc)
+			deps.stdin = strings.NewReader(answer)
 			var stdout, stderr bytes.Buffer
-			code := runDelete([]string{"42"}, strings.NewReader(answer), &stdout, &stderr, deleteDeps(gc))
+			code := runDelete([]string{"42"}, &stdout, &stderr, deps)
 			if code != 0 {
 				t.Fatalf("exit = %d, want 0 (abort is not an error)", code)
 			}
@@ -91,7 +98,7 @@ func TestRunDelete_confirm_eof(t *testing.T) {
 	// Empty stdin → EOF before any input → error suggesting --yes.
 	gc := &fakeGitClient{}
 	var stdout, stderr bytes.Buffer
-	code := runDelete([]string{"42"}, strings.NewReader(""), &stdout, &stderr, deleteDeps(gc))
+	code := runDelete([]string{"42"}, &stdout, &stderr, deleteDeps(gc))
 	if code != 1 {
 		t.Fatalf("exit = %d, want 1", code)
 	}
@@ -121,7 +128,7 @@ func TestRunDelete_arg_conflicts(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			gc := &fakeGitClient{}
 			var stdout, stderr bytes.Buffer
-			code := runDelete(tt.args, strings.NewReader(""), &stdout, &stderr, deleteDeps(gc))
+			code := runDelete(tt.args, &stdout, &stderr, deleteDeps(gc))
 			if code != 1 {
 				t.Errorf("exit = %d, want 1", code)
 			}
@@ -138,7 +145,7 @@ func TestRunDelete_arg_conflicts(t *testing.T) {
 func TestRunDelete_not_found(t *testing.T) {
 	gc := &fakeGitClient{deleteErr: gh.ErrNotFound}
 	var stdout, stderr bytes.Buffer
-	code := runDelete([]string{"--yes", "--key", "nope"}, strings.NewReader(""), &stdout, &stderr, deleteDeps(gc))
+	code := runDelete([]string{"--yes", "--key", "nope"}, &stdout, &stderr, deleteDeps(gc))
 	if code != 1 {
 		t.Fatalf("exit = %d, want 1", code)
 	}
@@ -153,7 +160,7 @@ func TestRunDelete_errors(t *testing.T) {
 			resolveRepo: func(string) (*gh.Repo, error) { return nil, errors.New("boom") },
 		}
 		var stdout, stderr bytes.Buffer
-		code := runDelete([]string{"--yes", "42"}, strings.NewReader(""), &stdout, &stderr, deps)
+		code := runDelete([]string{"--yes", "42"}, &stdout, &stderr, deps)
 		if code != 1 {
 			t.Fatalf("exit = %d", code)
 		}
@@ -168,7 +175,7 @@ func TestRunDelete_errors(t *testing.T) {
 			newGitClient: func() (gitDataClient, error) { return nil, errors.New("no auth") },
 		}
 		var stdout, stderr bytes.Buffer
-		code := runDelete([]string{"--yes", "42"}, strings.NewReader(""), &stdout, &stderr, deps)
+		code := runDelete([]string{"--yes", "42"}, &stdout, &stderr, deps)
 		if code != 1 {
 			t.Fatalf("exit = %d", code)
 		}
@@ -180,7 +187,7 @@ func TestRunDelete_errors(t *testing.T) {
 	t.Run("DeleteRef non-404 error", func(t *testing.T) {
 		gc := &fakeGitClient{deleteErr: errors.New("api 500")}
 		var stdout, stderr bytes.Buffer
-		code := runDelete([]string{"--yes", "42"}, strings.NewReader(""), &stdout, &stderr, deleteDeps(gc))
+		code := runDelete([]string{"--yes", "42"}, &stdout, &stderr, deleteDeps(gc))
 		if code != 1 {
 			t.Fatalf("exit = %d", code)
 		}
@@ -191,7 +198,7 @@ func TestRunDelete_errors(t *testing.T) {
 
 	t.Run("unknown flag", func(t *testing.T) {
 		var stdout, stderr bytes.Buffer
-		code := runDelete([]string{"--nope"}, strings.NewReader(""), &stdout, &stderr, deleteDeps(&fakeGitClient{}))
+		code := runDelete([]string{"--nope"}, &stdout, &stderr, deleteDeps(&fakeGitClient{}))
 		if code != 1 {
 			t.Fatalf("exit = %d", code)
 		}
@@ -210,7 +217,7 @@ func TestRunDelete_subcommand_routing(t *testing.T) {
 		newGitClient: func() (gitDataClient, error) { return gc, nil },
 	}
 	var stdout, stderr bytes.Buffer
-	code := runWithDeps([]string{"delete", "--yes", "42"}, strings.NewReader(""), &stdout, &stderr, deps)
+	code := runWithDeps([]string{"delete", "--yes", "42"}, &stdout, &stderr, deps)
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0. stderr=%s", code, stderr.String())
 	}
@@ -228,7 +235,7 @@ func TestRunList_subcommand_routing(t *testing.T) {
 		newGitClient: func() (gitDataClient, error) { return gc, nil },
 	}
 	var stdout, stderr bytes.Buffer
-	code := runWithDeps([]string{"list"}, strings.NewReader(""), &stdout, &stderr, deps)
+	code := runWithDeps([]string{"list"}, &stdout, &stderr, deps)
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0. stderr=%s", code, stderr.String())
 	}

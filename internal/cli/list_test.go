@@ -11,14 +11,15 @@ import (
 )
 
 // listDeps builds a runDeps where resolveRepo returns a canned repo
-// and newGitClient returns the passed fakeGitClient. Most list tests
-// only need these two fields.
+// and newGitClient returns the passed fakeGitClient. stdin defaults
+// to an empty reader since list never needs it.
 func listDeps(gc *fakeGitClient) runDeps {
 	return runDeps{
 		resolveRepo: func(override string) (*gh.Repo, error) {
 			return &gh.Repo{Owner: "owner", Name: "repo"}, nil
 		},
 		newGitClient: func() (gitDataClient, error) { return gc, nil },
+		stdin:        strings.NewReader(""),
 	}
 }
 

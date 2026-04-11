@@ -10,7 +10,7 @@ import (
 
 func TestFormatComment(t *testing.T) {
 	t.Run("single image with title", func(t *testing.T) {
-		repo := &Repo{Owner: "enthus-appdev", Name: "negsoft-gui"}
+		repo := &Repo{Owner: "enthus-appdev", Name: "demo-repo"}
 		paths := []AttachmentPath{
 			{Path: "screenshot.png"},
 		}
@@ -29,7 +29,7 @@ func TestFormatComment(t *testing.T) {
 	})
 
 	t.Run("multiple images without title", func(t *testing.T) {
-		repo := &Repo{Owner: "enthus-appdev", Name: "negsoft-gui"}
+		repo := &Repo{Owner: "enthus-appdev", Name: "demo-repo"}
 		paths := []AttachmentPath{
 			{Path: "a.png"},
 			{Path: "b.png"},
@@ -51,7 +51,7 @@ func TestFormatComment(t *testing.T) {
 		// The rendered URL must URL-encode them so the link works in a
 		// browser; the display name (alt text) must stay unencoded so
 		// users see the original filename.
-		repo := &Repo{Owner: "enthus-appdev", Name: "negsoft-gui"}
+		repo := &Repo{Owner: "enthus-appdev", Name: "demo-repo"}
 		paths := []AttachmentPath{
 			{Path: "Screen Shot 2026.png"},
 			{Path: "café#1.png"},
@@ -76,7 +76,7 @@ func TestFormatComment(t *testing.T) {
 	})
 
 	t.Run("single image no title", func(t *testing.T) {
-		repo := &Repo{Owner: "enthus-appdev", Name: "negsoft-gui"}
+		repo := &Repo{Owner: "enthus-appdev", Name: "demo-repo"}
 		paths := []AttachmentPath{
 			{Path: "shot.png"},
 		}

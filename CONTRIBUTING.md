@@ -71,7 +71,7 @@ go test ./...
 go test -race ./...
 
 # Test a single package with verbose output
-go test -v ./internal/cli/
+go test -v ./internal/cli
 
 # Coverage report — same invocation CI uses
 go test -coverpkg=./internal/... -coverprofile=cover.out ./...
@@ -135,8 +135,11 @@ should follow the same pattern.
    is no hard threshold, but significant drops will get flagged in review.
 4. **Run the full suite locally before pushing:**
    ```bash
-   go build ./... && go vet ./... && go test ./... && golangci-lint run ./...
+   go build ./... && go test ./... && golangci-lint run ./...
    ```
+   (`go test` already runs a subset of `go vet` automatically, so there's
+   no need to invoke `go vet` separately here. It's still listed in the
+   Common commands section above if you want to run it on its own.)
 5. **Smoke-test against a real repo** if your change touches the upload,
    download, or comment flow. Create a throwaway issue on a repo you own,
    run your modified binary against it end-to-end, and clean up (`gh
@@ -151,7 +154,7 @@ Merged commits look like:
 
 ```
 feat: add --name flag for reading file bytes from stdin (#20)
-fix: address PR review — humanizeBytes out-of-bounds on large sizes
+fix: release asset naming for gh extension install (#7)
 docs: add SECURITY.md (#26)
 chore: use demo-repo as neutral test fixture name (#23)
 refactor: cmd/ + internal/ layout, test injection, 56% → 97% coverage (#15)

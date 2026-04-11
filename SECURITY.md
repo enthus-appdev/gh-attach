@@ -1,10 +1,11 @@
 # Security Policy
 
-`gh-attach` handles GitHub authentication cookies on the local machine and
-uploads file contents on behalf of the signed-in user via GitHub's Git Data
-API. A security bug in this tool could expose credentials or let an attacker
-write content under someone else's identity, so please report issues privately
-so they can be fixed before public disclosure.
+`gh-attach` reads the signed-in user's OAuth token from the [`gh` CLI](https://cli.github.com/)
+(via `gh auth token`) and uses it to push file contents under that user's
+identity via GitHub's Git Data API. A security bug in this tool could leak
+the token, let an attacker write content under someone else's identity, or
+escape out of the intended filesystem boundaries on upload or download, so
+please report issues privately so they can be fixed before public disclosure.
 
 ## Supported versions
 
@@ -60,33 +61,52 @@ the security advisory thread.
 Anything in the `gh-attach` binary or its upload/download flow. High-value
 areas to probe:
 
-- **Authentication handling** — `user_session` cookie extraction via `kooky`,
-  cookie jar construction, the 3-step upload token chain (`uploadToken` →
-  `asset_upload_authenticity_token` → S3 presigned POST), and `gh` CLI
-  delegation for repo ID resolution.
-- **File handling** — `--name` basename validation, stdin materialization to
-  temp files, path traversal in both the upload and `get` paths, `filepath.Base`
-  assumptions, and symlink handling.
+- **Authentication handling** — the `gh auth token` exec path in
+  `internal/gh/resolver.go` that resolves the user's OAuth token, how that
+  token is passed to the HTTP client (`Authorization: token ...` on every
+  request in `internal/gh/gitdata.go` and `internal/gh/comment.go`), and
+  whether the token can leak into error messages, log output, or the
+  `--json` result on stderr/stdout.
+- **`gh` CLI delegation** — the three subprocess call sites that
+  `gh-attach` goes through (all in `internal/gh/resolver.go`):
+  `git remote get-url origin` (static args), `gh auth token` (static
+  args), and `gh pr view --json number --repo <repo>` where `<repo>`
+  is the string passed to `--repo` or parsed from the git remote. The
+  third one is the only path where user-influenced input reaches argv,
+  so it's the candidate worth probing for argument-injection edge
+  cases.
+- **Git Data API flow** — the 4-step upload sequence (blob → tree →
+  commit → ref create or fast-forward) in `internal/gh/gitdata.go`, the
+  matching 4-step download sequence (ref → commit → tree → blob) in
+  `GetAttachments`, and the ref create/delete endpoints in
+  `DeleteRef`/`ListRefs`.
+- **File handling** — `--name` basename validation, stdin materialization
+  to temp files, path traversal in both the upload and `get` paths,
+  `filepath.Base` assumptions on arbitrary input, symlink handling in
+  `expandFiles`, and the pre-flight conflict check + force-overwrite
+  behavior of `gh attach get`.
 - **Ref handling** — `refs/uploads/*` namespace construction, ref name
-  validation (`gh.ValidateKey`), and commit/tree walking in `get`.
+  validation (`gh.ValidateKey`), and the commit/tree walking performed by
+  `gh attach get`.
 - **Git remote parsing** — the SSH and HTTPS URL parsers in
-  `internal/gh/repo.go`, including any input that could lead to command or
-  argument injection in the `gh` CLI calls that follow.
-- **Output rendering** — markdown injection via filename fields, URL encoding
-  in embed URLs, and the `--json` output contract.
+  `internal/gh/repo.go`, including any input that could lead to command
+  or argument injection in the `gh` CLI calls that follow, or to
+  targeting the wrong repository.
+- **Output rendering** — markdown injection via filename fields in
+  `FormatSection`, URL encoding in embed URLs (`EmbedURL`), and the
+  `--json` output contract for `upload`/`list`/`get` results.
 
 ### Out of scope
 
 Please report the following upstream rather than here — they are not
 `gh-attach` vulnerabilities:
 
-- Issues in the [`gh` CLI](https://github.com/cli/cli) itself
-- Issues in the [`kooky`](https://github.com/browserutils/kooky) browser
-  cookie library
-- Issues in the Go standard library or toolchain
-- Issues in GitHub's own API or storage infrastructure
-- An authenticated user uploading content to their own repositories — that
-  is the intended behavior of the tool
+- Issues in the [`gh` CLI](https://github.com/cli/cli) itself, including
+  how it stores and retrieves OAuth tokens on the local machine
+- Issues in the Go standard library, toolchain, or `net/http` defaults
+- Issues in GitHub's own API, storage infrastructure, or rate limits
+- An authenticated user uploading content to their own repositories —
+  that is the intended behavior of the tool
 
 ## Disclosure policy
 

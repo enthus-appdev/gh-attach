@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"path/filepath"
 	"strings"
 )
 
@@ -37,9 +38,58 @@ func formatComment(repo *Repo, paths []AttachmentPath, commitSHA, title string) 
 	return commentMarker + "\n### Attachments\n" + FormatSection(repo, paths, commitSHA, title)
 }
 
-// FormatSection builds just the image table (without marker or heading)
-// and is used for both stdout output from the CLI and the appended
-// section in an upserted PR/issue comment.
+// imageExtensions is the set of file extensions FormatSection renders
+// as inline image embeds (`![alt](url)`). Any other extension is
+// rendered as a plain link (`[name](url)`), which is the correct
+// shape for PDFs, logs, text files, archives, etc. — trying to use
+// an image embed for those produces a broken-image icon in the
+// GitHub markdown renderer, Slack, and email clients.
+//
+// Extension-based detection (rather than MIME sniffing of the file
+// bytes) keeps the decision predictable and local to the rendering
+// layer: FormatSection only has the basename to work with, not the
+// file itself, and the caller's intent matches the extension they
+// chose.
+var imageExtensions = map[string]struct{}{
+	".png":  {},
+	".jpg":  {},
+	".jpeg": {},
+	".gif":  {},
+	".webp": {},
+	".svg":  {},
+	".bmp":  {},
+	".ico":  {},
+	".apng": {},
+	".avif": {},
+	".heic": {},
+	".heif": {},
+}
+
+// isImage reports whether `name` has an extension FormatSection
+// should render as an inline image embed. Match is case-insensitive
+// so `IMG_1234.JPG` and `foo.Png` both count as images.
+func isImage(name string) bool {
+	ext := strings.ToLower(filepath.Ext(name))
+	_, ok := imageExtensions[ext]
+	return ok
+}
+
+// FormatSection builds the markdown section for an attachment
+// upload, without the marker or heading. Used for both default
+// stdout output from the CLI and the appended section in an
+// upserted PR/issue comment.
+//
+// Shape depends on the mix of file types:
+//   - Pure image upload: the existing 1- or 2-column markdown table
+//     with `![name](url)` cells. Two columns for multiple images so
+//     users get side-by-side previews (before/after screenshots).
+//   - Pure non-image upload: a single-column table with `[name](url)`
+//     cells, so PDFs, logs, archives, etc. produce clickable links
+//     instead of broken image embeds.
+//   - Mixed upload: images come first in a 1- or 2-column image
+//     table, followed by non-images in a single-column link table.
+//     Keeps the side-by-side preview for images without wedging
+//     plain links into the same row.
 func FormatSection(repo *Repo, paths []AttachmentPath, commitSHA, title string) string {
 	var b strings.Builder
 
@@ -49,48 +99,68 @@ func FormatSection(repo *Repo, paths []AttachmentPath, commitSHA, title string) 
 		b.WriteString("\n")
 	}
 
-	type imageEntry struct {
+	type entry struct {
 		name string
 		url  string
 	}
-	var images []imageEntry
+	var images, files []entry
 	for _, p := range paths {
 		// URL-encoding of special characters in the filename (spaces,
 		// `#`, `?`, non-ASCII) is handled inside EmbedURL via
 		// url.PathEscape, so the href is always browser-safe while
 		// the display name (alt text) stays raw.
-		images = append(images, imageEntry{name: p.Path, url: EmbedURL(repo, commitSHA, p.Path)})
+		e := entry{name: p.Path, url: EmbedURL(repo, commitSHA, p.Path)}
+		if isImage(p.Path) {
+			images = append(images, e)
+		} else {
+			files = append(files, e)
+		}
 	}
 
-	cols := 2
-	if len(images) == 1 {
-		cols = 1
+	// Render images as the existing 1- or 2-column image table.
+	if len(images) > 0 {
+		cols := 2
+		if len(images) == 1 {
+			cols = 1
+		}
+		for i := 0; i < len(images); i += cols {
+			end := i + cols
+			if end > len(images) {
+				end = len(images)
+			}
+			row := images[i:end]
+
+			headers := make([]string, len(row))
+			for j, img := range row {
+				headers[j] = img.name
+			}
+			b.WriteString("| " + strings.Join(headers, " | ") + " |\n")
+
+			seps := make([]string, len(row))
+			for j := range row {
+				seps[j] = "---"
+			}
+			b.WriteString("|" + strings.Join(seps, "|") + "|\n")
+
+			cells := make([]string, len(row))
+			for j, img := range row {
+				cells[j] = fmt.Sprintf("![%s](%s)", img.name, img.url)
+			}
+			b.WriteString("| " + strings.Join(cells, " | ") + " |\n\n")
+		}
 	}
 
-	for i := 0; i < len(images); i += cols {
-		end := i + cols
-		if end > len(images) {
-			end = len(images)
+	// Render non-images as a single-column table of plain links. A
+	// table (rather than a bullet list) keeps the visual weight
+	// consistent with the image table above it, and preserves the
+	// "file name header + content cell" structure so the two
+	// sections read as a unit when they appear together.
+	if len(files) > 0 {
+		for _, f := range files {
+			b.WriteString("| " + f.name + " |\n")
+			b.WriteString("|---|\n")
+			b.WriteString("| " + fmt.Sprintf("[%s](%s)", f.name, f.url) + " |\n\n")
 		}
-		row := images[i:end]
-
-		headers := make([]string, len(row))
-		for j, img := range row {
-			headers[j] = img.name
-		}
-		b.WriteString("| " + strings.Join(headers, " | ") + " |\n")
-
-		seps := make([]string, len(row))
-		for j := range row {
-			seps[j] = "---"
-		}
-		b.WriteString("|" + strings.Join(seps, "|") + "|\n")
-
-		cells := make([]string, len(row))
-		for j, img := range row {
-			cells[j] = fmt.Sprintf("![%s](%s)", img.name, img.url)
-		}
-		b.WriteString("| " + strings.Join(cells, " | ") + " |\n\n")
 	}
 
 	return b.String()

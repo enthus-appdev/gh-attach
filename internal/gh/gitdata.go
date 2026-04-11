@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -32,6 +33,19 @@ var httpClient = &http.Client{Timeout: 60 * time.Second}
 // keyed by basename, so Path doubles as both the tree path and the display name.
 type AttachmentPath struct {
 	Path string // e.g. "screenshot.png"
+}
+
+// Attachment is a single file resolved via GetAttachments. It bundles
+// the tree-relative path (always a basename in current uploads), the
+// blob SHA for traceability, the declared size, and the raw decoded
+// bytes. Content is loaded eagerly — suitable for screenshots and
+// diagrams but not for multi-GB payloads. Add a streaming variant
+// if that ever matters.
+type Attachment struct {
+	Path    string // basename under the tree root, e.g. "screenshot.png"
+	SHA     string // blob SHA — stable handle for the content across pulls
+	Size    int64  // declared size in bytes (matches len(Content) on success)
+	Content []byte // raw decoded bytes
 }
 
 // EmbedURL returns the raw-blob GitHub URL that renders as an inline
@@ -236,7 +250,11 @@ func (c *GitDataClient) get(path string, result interface{}) error {
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusNotFound {
-		return fmt.Errorf("not found")
+		// Return the sentinel (not a fresh fmt.Errorf) so callers can
+		// use errors.Is(err, ErrNotFound) to distinguish 404 from
+		// other failures. The original fresh-error version silently
+		// broke that check for every caller.
+		return errNotFound
 	}
 	if resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(resp.Body)
@@ -464,4 +482,119 @@ func parseRefEntry(ref, sha string) RefEntry {
 func (c *GitDataClient) DeleteRef(repo *Repo, refPath string) error {
 	apiPath := fmt.Sprintf("repos/%s/%s/git/refs/%s", repo.Owner, repo.Name, refPath)
 	return c.httpDelete(apiPath)
+}
+
+// GetAttachments walks the tree at refs/<refPath> and returns every
+// blob entry with its raw decoded bytes plus the commit SHA the ref
+// currently points at. The tip commit SHA is the caller's stable
+// handle for building embed URLs that match what PushAttachments
+// would have produced, so this is the exact inverse of the
+// PushAttachments flow.
+//
+// The walk is:
+//  1. GET git/ref/<refPath>       → commit SHA (404 → ErrNotFound)
+//  2. GET git/commits/<commitSHA> → tree SHA
+//  3. GET git/trees/<treeSHA>     → tree entries
+//  4. For every "blob" entry:
+//     GET git/blobs/<blobSHA>     → base64 content
+//
+// Non-blob entries (subtrees, submodules, symlinks) are silently
+// skipped. Current uploads never produce those — PushAttachments
+// only emits type=blob mode=100644 — but a future reader should
+// not crash on a tree that happens to include one.
+//
+// Results are ordered by the tree entry order returned by the API,
+// which is lexicographic for a single tree. Callers that need a
+// specific order should sort the returned slice.
+func (c *GitDataClient) GetAttachments(repo *Repo, refPath string) ([]Attachment, string, error) {
+	prefix := fmt.Sprintf("repos/%s/%s", repo.Owner, repo.Name)
+
+	// 1. Resolve the ref → commit SHA
+	var refResp struct {
+		Object struct {
+			SHA string `json:"sha"`
+		} `json:"object"`
+	}
+	if err := c.get(fmt.Sprintf("%s/git/ref/%s", prefix, refPath), &refResp); err != nil {
+		if errors.Is(err, errNotFound) {
+			return nil, "", errNotFound
+		}
+		return nil, "", fmt.Errorf("get ref: %w", err)
+	}
+	commitSHA := refResp.Object.SHA
+
+	// 2. Resolve the commit → tree SHA
+	var commitResp struct {
+		Tree struct {
+			SHA string `json:"sha"`
+		} `json:"tree"`
+	}
+	if err := c.get(fmt.Sprintf("%s/git/commits/%s", prefix, commitSHA), &commitResp); err != nil {
+		return nil, "", fmt.Errorf("get commit: %w", err)
+	}
+
+	// 3. Resolve the tree → entries
+	var treeResp struct {
+		Tree []struct {
+			Path string `json:"path"`
+			Mode string `json:"mode"`
+			Type string `json:"type"`
+			SHA  string `json:"sha"`
+			Size int64  `json:"size"`
+		} `json:"tree"`
+	}
+	if err := c.get(fmt.Sprintf("%s/git/trees/%s", prefix, commitResp.Tree.SHA), &treeResp); err != nil {
+		return nil, "", fmt.Errorf("get tree: %w", err)
+	}
+
+	// 4. Fetch each blob and decode
+	attachments := make([]Attachment, 0, len(treeResp.Tree))
+	for _, entry := range treeResp.Tree {
+		if entry.Type != "blob" {
+			continue
+		}
+		var blobResp struct {
+			Content  string `json:"content"`
+			Encoding string `json:"encoding"`
+			Size     int64  `json:"size"`
+			SHA      string `json:"sha"`
+		}
+		if err := c.get(fmt.Sprintf("%s/git/blobs/%s", prefix, entry.SHA), &blobResp); err != nil {
+			return nil, "", fmt.Errorf("get blob %s (%s): %w", entry.SHA, entry.Path, err)
+		}
+		if blobResp.Encoding != "base64" {
+			return nil, "", fmt.Errorf("blob %s (%s): unexpected encoding %q, want base64", entry.SHA, entry.Path, blobResp.Encoding)
+		}
+		// GitHub wraps base64 payloads at 60 columns, so strip whitespace
+		// before decoding.
+		content, err := base64.StdEncoding.DecodeString(stripWhitespace(blobResp.Content))
+		if err != nil {
+			return nil, "", fmt.Errorf("decode blob %s (%s): %w", entry.SHA, entry.Path, err)
+		}
+		attachments = append(attachments, Attachment{
+			Path:    entry.Path,
+			SHA:     entry.SHA,
+			Size:    entry.Size,
+			Content: content,
+		})
+	}
+
+	return attachments, commitSHA, nil
+}
+
+// stripWhitespace removes ASCII whitespace from s. GitHub's blob
+// endpoint returns base64 payloads with embedded newlines every 60
+// chars; base64.StdEncoding.DecodeString rejects those, so we clean
+// them up first. Broader than strict RFC 4648 but that's the intent —
+// we want to be forgiving about what we accept from the API.
+func stripWhitespace(s string) string {
+	b := make([]byte, 0, len(s))
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c == ' ' || c == '\n' || c == '\r' || c == '\t' {
+			continue
+		}
+		b = append(b, c)
+	}
+	return string(b)
 }

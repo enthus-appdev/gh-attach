@@ -52,6 +52,13 @@ type fakeGitClient struct {
 	deleteErr     error
 	deleteCalled  bool
 	gotDeletePath string
+
+	// canned response for GetAttachments
+	getAttachments []gh.Attachment
+	getSHA         string
+	getErr         error
+	getCalled      bool
+	gotGetPath     string
 }
 
 func (f *fakeGitClient) PushAttachments(repo *gh.Repo, refPath, commitMessage string, files []string) ([]gh.AttachmentPath, string, error) {
@@ -91,6 +98,16 @@ func (f *fakeGitClient) DeleteRef(repo *gh.Repo, refPath string) error {
 	f.gotRepo = repo
 	f.gotDeletePath = refPath
 	return f.deleteErr
+}
+
+func (f *fakeGitClient) GetAttachments(repo *gh.Repo, refPath string) ([]gh.Attachment, string, error) {
+	f.getCalled = true
+	f.gotRepo = repo
+	f.gotGetPath = refPath
+	if f.getErr != nil {
+		return nil, "", f.getErr
+	}
+	return f.getAttachments, f.getSHA, nil
 }
 
 // fakeCmtClient is a test double for gh.CommentClient. Same shape as

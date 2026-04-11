@@ -2,6 +2,7 @@ package gh
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -402,6 +403,37 @@ func TestGitDataClientHTTPErrorPaths(t *testing.T) {
 		}
 	})
 
+	t.Run("httpDelete returns 500", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "nope", http.StatusInternalServerError)
+		}))
+		defer srv.Close()
+		c := &GitDataClient{BaseURL: srv.URL, Token: "t"}
+		err := c.httpDelete("x")
+		if err == nil || !strings.Contains(err.Error(), "500") {
+			t.Errorf("err = %v, want 500", err)
+		}
+	})
+
+	t.Run("httpDelete network failure", func(t *testing.T) {
+		c := &GitDataClient{BaseURL: "http://127.0.0.1:1", Token: "t"}
+		if err := c.httpDelete("x"); err == nil {
+			t.Fatal("expected network error")
+		}
+	})
+
+	t.Run("httpDelete 404 returns ErrNotFound", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNotFound)
+		}))
+		defer srv.Close()
+		c := &GitDataClient{BaseURL: srv.URL, Token: "t"}
+		err := c.httpDelete("x")
+		if !errors.Is(err, ErrNotFound) {
+			t.Errorf("err = %v, want ErrNotFound", err)
+		}
+	})
+
 	t.Run("get 404 short-circuit", func(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusNotFound)
@@ -572,6 +604,278 @@ func TestPushAttachmentsErrorPaths(t *testing.T) {
 		_, _, err := c.PushAttachments(repo, "uploads/issues/7", "msg", []string{"/tmp/does-not-exist-gh-attach-test.png"})
 		if err == nil || !strings.Contains(err.Error(), "read") {
 			t.Errorf("err = %v, want 'read' error", err)
+		}
+	})
+}
+
+// ---------------------------------------------------------------------
+// parseRefEntry — pure function, unit tested without a server.
+// ---------------------------------------------------------------------
+
+func TestParseRefEntry(t *testing.T) {
+	tests := []struct {
+		name      string
+		ref       string
+		sha       string
+		wantNS    string
+		wantTgt   string
+		wantNum   int
+		wantKey   string
+	}{
+		{
+			name:    "issue ref",
+			ref:     "refs/uploads/issues/42",
+			sha:     "abc",
+			wantNS:  "issue",
+			wantTgt: "#42",
+			wantNum: 42,
+		},
+		{
+			name:    "misc ref",
+			ref:     "refs/uploads/misc/design-v2",
+			sha:     "def",
+			wantNS:  "misc",
+			wantTgt: "misc/design-v2",
+			wantKey: "design-v2",
+		},
+		{
+			name:    "misc ref with subpath",
+			ref:     "refs/uploads/misc/docs/arch",
+			sha:     "ghi",
+			wantNS:  "misc",
+			wantTgt: "misc/docs/arch",
+			wantKey: "docs/arch",
+		},
+		{
+			name:    "issues ref with non-numeric target (unexpected)",
+			ref:     "refs/uploads/issues/not-a-number",
+			sha:     "jkl",
+			wantNS:  "other",
+			wantTgt: "issues/not-a-number",
+		},
+		{
+			name:    "unknown namespace",
+			ref:     "refs/uploads/other/whatever",
+			sha:     "mno",
+			wantNS:  "other",
+			wantTgt: "other/whatever",
+		},
+		{
+			name:    "no namespace segment",
+			ref:     "refs/uploads/flat",
+			sha:     "pqr",
+			wantNS:  "other",
+			wantTgt: "flat",
+		},
+		{
+			name:    "not an uploads ref at all",
+			ref:     "refs/heads/main",
+			sha:     "stu",
+			wantNS:  "other",
+			wantTgt: "refs/heads/main",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := parseRefEntry(tt.ref, tt.sha)
+			if got.Ref != tt.ref {
+				t.Errorf("Ref = %q, want %q", got.Ref, tt.ref)
+			}
+			if got.SHA != tt.sha {
+				t.Errorf("SHA = %q, want %q", got.SHA, tt.sha)
+			}
+			if got.Namespace != tt.wantNS {
+				t.Errorf("Namespace = %q, want %q", got.Namespace, tt.wantNS)
+			}
+			if got.Target != tt.wantTgt {
+				t.Errorf("Target = %q, want %q", got.Target, tt.wantTgt)
+			}
+			if got.Number != tt.wantNum {
+				t.Errorf("Number = %d, want %d", got.Number, tt.wantNum)
+			}
+			if got.Key != tt.wantKey {
+				t.Errorf("Key = %q, want %q", got.Key, tt.wantKey)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------
+// ListRefs — mock-server tests for happy path, filter, and errors.
+// ---------------------------------------------------------------------
+
+func TestListRefs(t *testing.T) {
+	repo := &Repo{Owner: "owner", Name: "repo"}
+
+	canned := []map[string]interface{}{
+		{
+			"ref":    "refs/uploads/issues/42",
+			"object": map[string]string{"sha": "sha42"},
+		},
+		{
+			"ref":    "refs/uploads/misc/design-v2",
+			"object": map[string]string{"sha": "sha-design"},
+		},
+	}
+
+	t.Run("all refs (no subPrefix)", func(t *testing.T) {
+		var gotPath string
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			gotPath = r.URL.Path
+			_ = json.NewEncoder(w).Encode(canned)
+		}))
+		defer srv.Close()
+
+		c := &GitDataClient{BaseURL: srv.URL, Token: "t"}
+		entries, err := c.ListRefs(repo, "")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if gotPath != "/repos/owner/repo/git/matching-refs/uploads" {
+			t.Errorf("API path = %q, want /repos/owner/repo/git/matching-refs/uploads", gotPath)
+		}
+		if len(entries) != 2 {
+			t.Fatalf("got %d entries, want 2", len(entries))
+		}
+		if entries[0].Namespace != "issue" || entries[0].Number != 42 {
+			t.Errorf("entry[0] = %+v", entries[0])
+		}
+		if entries[1].Namespace != "misc" || entries[1].Key != "design-v2" {
+			t.Errorf("entry[1] = %+v", entries[1])
+		}
+	})
+
+	t.Run("issues subPrefix", func(t *testing.T) {
+		var gotPath string
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			gotPath = r.URL.Path
+			_ = json.NewEncoder(w).Encode(canned[:1])
+		}))
+		defer srv.Close()
+
+		c := &GitDataClient{BaseURL: srv.URL, Token: "t"}
+		entries, err := c.ListRefs(repo, "issues")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if gotPath != "/repos/owner/repo/git/matching-refs/uploads/issues" {
+			t.Errorf("API path = %q", gotPath)
+		}
+		if len(entries) != 1 || entries[0].Namespace != "issue" {
+			t.Errorf("entries = %+v", entries)
+		}
+	})
+
+	t.Run("misc subPrefix", func(t *testing.T) {
+		var gotPath string
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			gotPath = r.URL.Path
+			_ = json.NewEncoder(w).Encode(canned[1:])
+		}))
+		defer srv.Close()
+
+		c := &GitDataClient{BaseURL: srv.URL, Token: "t"}
+		entries, err := c.ListRefs(repo, "misc")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if gotPath != "/repos/owner/repo/git/matching-refs/uploads/misc" {
+			t.Errorf("API path = %q", gotPath)
+		}
+		if len(entries) != 1 || entries[0].Namespace != "misc" {
+			t.Errorf("entries = %+v", entries)
+		}
+	})
+
+	t.Run("empty result", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_ = json.NewEncoder(w).Encode([]interface{}{})
+		}))
+		defer srv.Close()
+
+		c := &GitDataClient{BaseURL: srv.URL, Token: "t"}
+		entries, err := c.ListRefs(repo, "")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(entries) != 0 {
+			t.Errorf("entries = %+v, want empty", entries)
+		}
+	})
+
+	t.Run("server 500", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "nope", http.StatusInternalServerError)
+		}))
+		defer srv.Close()
+
+		c := &GitDataClient{BaseURL: srv.URL, Token: "t"}
+		_, err := c.ListRefs(repo, "")
+		if err == nil {
+			t.Fatal("expected error")
+		}
+	})
+}
+
+// ---------------------------------------------------------------------
+// DeleteRef — success, ErrNotFound, and transport errors.
+// ---------------------------------------------------------------------
+
+func TestDeleteRef(t *testing.T) {
+	repo := &Repo{Owner: "owner", Name: "repo"}
+
+	t.Run("success (204)", func(t *testing.T) {
+		var gotMethod, gotPath string
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			gotMethod = r.Method
+			gotPath = r.URL.Path
+			w.WriteHeader(http.StatusNoContent)
+		}))
+		defer srv.Close()
+
+		c := &GitDataClient{BaseURL: srv.URL, Token: "t"}
+		if err := c.DeleteRef(repo, "uploads/misc/design-v2"); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if gotMethod != "DELETE" {
+			t.Errorf("method = %q, want DELETE", gotMethod)
+		}
+		if gotPath != "/repos/owner/repo/git/refs/uploads/misc/design-v2" {
+			t.Errorf("path = %q", gotPath)
+		}
+	})
+
+	t.Run("404 returns ErrNotFound", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNotFound)
+		}))
+		defer srv.Close()
+
+		c := &GitDataClient{BaseURL: srv.URL, Token: "t"}
+		err := c.DeleteRef(repo, "uploads/misc/nope")
+		if !errors.Is(err, ErrNotFound) {
+			t.Errorf("err = %v, want ErrNotFound", err)
+		}
+	})
+
+	t.Run("server 500", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "nope", http.StatusInternalServerError)
+		}))
+		defer srv.Close()
+
+		c := &GitDataClient{BaseURL: srv.URL, Token: "t"}
+		err := c.DeleteRef(repo, "uploads/issues/42")
+		if err == nil || errors.Is(err, ErrNotFound) {
+			t.Errorf("err = %v, want non-ErrNotFound", err)
+		}
+	})
+
+	t.Run("network failure", func(t *testing.T) {
+		c := &GitDataClient{BaseURL: "http://127.0.0.1:1", Token: "t"}
+		if err := c.DeleteRef(repo, "uploads/issues/42"); err == nil {
+			t.Fatal("expected network error")
 		}
 	})
 }

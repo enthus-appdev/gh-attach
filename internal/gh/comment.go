@@ -155,11 +155,15 @@ func FormatSection(repo *Repo, paths []AttachmentPath, commitSHA, title string) 
 	// consistent with the image table above it, and preserves the
 	// "file name header + content cell" structure so the two
 	// sections read as a unit when they appear together.
+	//
+	// fmt.Fprintf on a *strings.Builder is the idiomatic form for
+	// infallible writes — strings.Builder.Write is documented to
+	// never fail, so there's nothing useful to do with the error.
 	if len(files) > 0 {
 		for _, f := range files {
-			b.WriteString("| " + f.name + " |\n")
+			fmt.Fprintf(&b, "| %s |\n", f.name)
 			b.WriteString("|---|\n")
-			b.WriteString("| " + fmt.Sprintf("[%s](%s)", f.name, f.url) + " |\n\n")
+			fmt.Fprintf(&b, "| [%s](%s) |\n\n", f.name, f.url)
 		}
 	}
 

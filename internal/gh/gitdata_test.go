@@ -434,6 +434,41 @@ func TestGitDataClientHTTPErrorPaths(t *testing.T) {
 		}
 	})
 
+	t.Run("httpDelete 422 Reference does not exist returns ErrNotFound", func(t *testing.T) {
+		// GitHub's Git Data API returns 422 (not 404) when deleting a
+		// ref that was never created. We detect the specific message
+		// so the CLI can show a clean "not found" error instead of
+		// dumping the raw 422 JSON body.
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			_, _ = w.Write([]byte(`{"message":"Reference does not exist","documentation_url":"https://docs.github.com/rest/git/refs#delete-a-reference","status":"422"}`))
+		}))
+		defer srv.Close()
+		c := &GitDataClient{BaseURL: srv.URL, Token: "t"}
+		err := c.httpDelete("x")
+		if !errors.Is(err, ErrNotFound) {
+			t.Errorf("err = %v, want ErrNotFound", err)
+		}
+	})
+
+	t.Run("httpDelete 422 with different message is NOT ErrNotFound", func(t *testing.T) {
+		// A genuine validation error (not "does not exist") should
+		// fall through to the generic wrapped error, not ErrNotFound.
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			_, _ = w.Write([]byte(`{"message":"Validation Failed","errors":[]}`))
+		}))
+		defer srv.Close()
+		c := &GitDataClient{BaseURL: srv.URL, Token: "t"}
+		err := c.httpDelete("x")
+		if err == nil {
+			t.Fatal("expected error")
+		}
+		if errors.Is(err, ErrNotFound) {
+			t.Errorf("err = %v, should NOT be ErrNotFound", err)
+		}
+	})
+
 	t.Run("get 404 short-circuit", func(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusNotFound)

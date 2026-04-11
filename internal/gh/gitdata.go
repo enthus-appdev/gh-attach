@@ -307,14 +307,31 @@ func (c *GitDataClient) httpDelete(path string) error {
 	}
 	defer func() { _ = resp.Body.Close() }()
 
+	if resp.StatusCode < 300 {
+		return nil
+	}
+
+	// Read the body once — we need it for both the not-found detection
+	// and the fallback error message.
+	respBody, _ := io.ReadAll(resp.Body)
+
+	// Classic 404 — rare from the GitHub Git Data API for refs but
+	// present historically and on some Enterprise instances.
 	if resp.StatusCode == http.StatusNotFound {
 		return errNotFound
 	}
-	if resp.StatusCode >= 300 {
-		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("DELETE %s: %d — %s", path, resp.StatusCode, respBody)
+	// GitHub's Git Data API returns `422 Unprocessable Entity` with
+	// {"message":"Reference does not exist"} when you DELETE a ref
+	// that was never created. This is semantically "not found" but
+	// with a non-404 status code. Detect the specific message so the
+	// CLI layer can render a clean error instead of dumping the raw
+	// 422 JSON body.
+	if resp.StatusCode == http.StatusUnprocessableEntity &&
+		bytes.Contains(respBody, []byte("Reference does not exist")) {
+		return errNotFound
 	}
-	return nil
+
+	return fmt.Errorf("DELETE %s: %d — %s", path, resp.StatusCode, respBody)
 }
 
 // errNotFound is returned by httpDelete and ListRefs when the target

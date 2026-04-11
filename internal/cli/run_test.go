@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"io"
 	"strings"
@@ -137,7 +138,7 @@ func TestRunUploadIssueMode(t *testing.T) {
 	deps := happyDeps(git, cmt)
 
 	var stdout, stderr bytes.Buffer
-	err := runUpload(42, []string{"banner.png"}, "", false, "", "", &stdout, &stderr, deps)
+	err := runUpload(42, []string{"banner.png"}, "", false, "", "", false, &stdout, &stderr, deps)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -179,7 +180,7 @@ func TestRunUploadKeyMode(t *testing.T) {
 	deps := happyDeps(git, cmt)
 
 	var stdout, stderr bytes.Buffer
-	err := runUpload(0, []string{"mockup.png"}, "Design v2", false, "", "design-v2", &stdout, &stderr, deps)
+	err := runUpload(0, []string{"mockup.png"}, "Design v2", false, "", "design-v2", false, &stdout, &stderr, deps)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -205,7 +206,7 @@ func TestRunUploadAutoDetectPR(t *testing.T) {
 	deps := happyDeps(git, &fakeCmtClient{})
 
 	var stdout, stderr bytes.Buffer
-	err := runUpload(0, []string{"f.png"}, "", false, "", "", &stdout, &stderr, deps)
+	err := runUpload(0, []string{"f.png"}, "", false, "", "", false, &stdout, &stderr, deps)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -221,7 +222,7 @@ func TestRunUploadWithComment(t *testing.T) {
 	deps := happyDeps(git, cmt)
 
 	var stdout, stderr bytes.Buffer
-	err := runUpload(7, []string{"f.png"}, "", true, "", "", &stdout, &stderr, deps)
+	err := runUpload(7, []string{"f.png"}, "", true, "", "", false, &stdout, &stderr, deps)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -233,6 +234,190 @@ func TestRunUploadWithComment(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "Commented: https://example.com/pull/7#issuecomment-1") {
 		t.Errorf("stderr missing Commented line: %s", stderr.String())
+	}
+}
+
+// ---------------------------------------------------------------------
+// runUpload --json tests
+// ---------------------------------------------------------------------
+
+func TestRunUpload_json_issue_mode(t *testing.T) {
+	git := &fakeGitClient{
+		paths: []gh.AttachmentPath{{Path: "banner.png"}},
+		sha:   "abc1234def5678",
+	}
+	deps := happyDeps(git, &fakeCmtClient{})
+
+	var stdout, stderr bytes.Buffer
+	err := runUpload(42, []string{"banner.png"}, "", false, "", "", true, &stdout, &stderr, deps)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Stderr should be completely silent in JSON mode — no progress
+	// line, no Uploaded: URL list.
+	if stderr.Len() != 0 {
+		t.Errorf("stderr should be empty in JSON mode, got:\n%s", stderr.String())
+	}
+
+	// Parse the stdout JSON and assert the expected fields.
+	var parsed uploadResult
+	if err := json.Unmarshal(stdout.Bytes(), &parsed); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\n%s", err, stdout.String())
+	}
+
+	if parsed.Repo != "auto/repo" {
+		t.Errorf("repo = %q, want auto/repo", parsed.Repo)
+	}
+	if parsed.Target != "#42" {
+		t.Errorf("target = %q, want #42", parsed.Target)
+	}
+	if parsed.Namespace != "issue" {
+		t.Errorf("namespace = %q, want issue", parsed.Namespace)
+	}
+	if parsed.Number != 42 {
+		t.Errorf("number = %d, want 42", parsed.Number)
+	}
+	if parsed.Key != "" {
+		t.Errorf("key should be empty in issue mode, got %q", parsed.Key)
+	}
+	if parsed.Ref != "refs/uploads/issues/42" {
+		t.Errorf("ref = %q, want refs/uploads/issues/42", parsed.Ref)
+	}
+	if parsed.CommitSHA != "abc1234def5678" {
+		t.Errorf("commit_sha = %q, want abc1234def5678", parsed.CommitSHA)
+	}
+	if len(parsed.Files) != 1 || parsed.Files[0].Name != "banner.png" {
+		t.Errorf("files = %+v, want [{Name:banner.png ...}]", parsed.Files)
+	}
+	if !strings.Contains(parsed.Files[0].URL, "blob/abc1234def5678/banner.png?raw=true") {
+		t.Errorf("files[0].url = %q", parsed.Files[0].URL)
+	}
+	if !strings.Contains(parsed.Markdown, "![banner.png]") {
+		t.Errorf("markdown field missing expected content: %q", parsed.Markdown)
+	}
+	if parsed.CommentURL != "" {
+		t.Errorf("comment_url should be empty without --comment, got %q", parsed.CommentURL)
+	}
+}
+
+func TestRunUpload_json_key_mode(t *testing.T) {
+	git := &fakeGitClient{
+		paths: []gh.AttachmentPath{{Path: "mockup.png"}},
+		sha:   "feedc0de",
+	}
+	deps := happyDeps(git, &fakeCmtClient{})
+
+	var stdout, stderr bytes.Buffer
+	err := runUpload(0, []string{"mockup.png"}, "", false, "", "design-v2", true, &stdout, &stderr, deps)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if stderr.Len() != 0 {
+		t.Errorf("stderr should be empty, got:\n%s", stderr.String())
+	}
+
+	var parsed uploadResult
+	if err := json.Unmarshal(stdout.Bytes(), &parsed); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\n%s", err, stdout.String())
+	}
+	if parsed.Namespace != "misc" {
+		t.Errorf("namespace = %q, want misc", parsed.Namespace)
+	}
+	if parsed.Key != "design-v2" {
+		t.Errorf("key = %q, want design-v2", parsed.Key)
+	}
+	if parsed.Number != 0 {
+		t.Errorf("number should be zero in misc mode, got %d", parsed.Number)
+	}
+	if parsed.Target != "misc/design-v2" {
+		t.Errorf("target = %q, want misc/design-v2", parsed.Target)
+	}
+	if parsed.Ref != "refs/uploads/misc/design-v2" {
+		t.Errorf("ref = %q", parsed.Ref)
+	}
+}
+
+func TestRunUpload_json_with_comment(t *testing.T) {
+	git := &fakeGitClient{
+		paths: []gh.AttachmentPath{{Path: "f.png"}},
+		sha:   "sha",
+	}
+	cmt := &fakeCmtClient{url: "https://example.com/pull/7#issuecomment-42"}
+	deps := happyDeps(git, cmt)
+
+	var stdout, stderr bytes.Buffer
+	err := runUpload(7, []string{"f.png"}, "", true, "", "", true, &stdout, &stderr, deps)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !cmt.called {
+		t.Error("cmtClient.UpsertComment should have been called with --comment")
+	}
+	if stderr.Len() != 0 {
+		t.Errorf("stderr should be empty, got:\n%s", stderr.String())
+	}
+
+	var parsed uploadResult
+	if err := json.Unmarshal(stdout.Bytes(), &parsed); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\n%s", err, stdout.String())
+	}
+	if parsed.CommentURL != "https://example.com/pull/7#issuecomment-42" {
+		t.Errorf("comment_url = %q, want https://example.com/pull/7#issuecomment-42", parsed.CommentURL)
+	}
+}
+
+func TestRunUpload_json_url_encoding(t *testing.T) {
+	// Filenames with special characters must be URL-encoded in the
+	// files[].url field. The Name field stays raw so consumers can
+	// display it as-is.
+	git := &fakeGitClient{
+		paths: []gh.AttachmentPath{{Path: "Screen Shot 2026.png"}},
+		sha:   "sha",
+	}
+	deps := happyDeps(git, &fakeCmtClient{})
+
+	var stdout, stderr bytes.Buffer
+	err := runUpload(1, []string{"Screen Shot 2026.png"}, "", false, "", "", true, &stdout, &stderr, deps)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var parsed uploadResult
+	if err := json.Unmarshal(stdout.Bytes(), &parsed); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v", err)
+	}
+	if parsed.Files[0].Name != "Screen Shot 2026.png" {
+		t.Errorf("files[0].name = %q, want raw filename", parsed.Files[0].Name)
+	}
+	if !strings.Contains(parsed.Files[0].URL, "Screen%20Shot%202026.png") {
+		t.Errorf("files[0].url = %q, want URL-encoded", parsed.Files[0].URL)
+	}
+}
+
+func TestRunUpload_json_via_runWithDeps(t *testing.T) {
+	// Exercise the full flag-parse path through runWithDeps so the
+	// --json flag registration is covered end-to-end.
+	git := &fakeGitClient{
+		paths: []gh.AttachmentPath{{Path: "f.png"}},
+		sha:   "sha",
+	}
+	deps := happyDeps(git, &fakeCmtClient{})
+
+	var stdout, stderr bytes.Buffer
+	code := runWithDeps([]string{"--json", "42", "f.png"}, strings.NewReader(""), &stdout, &stderr, deps)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0. stderr=%s", code, stderr.String())
+	}
+	if stderr.Len() != 0 {
+		t.Errorf("stderr should be empty in JSON mode, got:\n%s", stderr.String())
+	}
+	var parsed uploadResult
+	if err := json.Unmarshal(stdout.Bytes(), &parsed); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\n%s", err, stdout.String())
+	}
+	if parsed.Number != 42 {
+		t.Errorf("number = %d, want 42", parsed.Number)
 	}
 }
 
@@ -277,7 +462,7 @@ func TestRunUploadConflictsAndValidation(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			deps := happyDeps(&fakeGitClient{}, &fakeCmtClient{})
-			err := runUpload(tt.number, tt.files, "", tt.postComment, tt.repoOverride, tt.key, io.Discard, io.Discard, deps)
+			err := runUpload(tt.number, tt.files, "", tt.postComment, tt.repoOverride, tt.key, false, io.Discard, io.Discard, deps)
 			if err == nil {
 				t.Fatal("expected error, got nil")
 			}
@@ -299,7 +484,7 @@ func TestRunUploadDependencyErrors(t *testing.T) {
 	t.Run("resolveRepo error", func(t *testing.T) {
 		deps := baseDeps()
 		deps.resolveRepo = func(string) (*gh.Repo, error) { return nil, errors.New("boom") }
-		err := runUpload(42, []string{"f.png"}, "", false, "", "", io.Discard, io.Discard, deps)
+		err := runUpload(42, []string{"f.png"}, "", false, "", "", false, io.Discard, io.Discard, deps)
 		if err == nil || !strings.Contains(err.Error(), "resolve repo: boom") {
 			t.Errorf("got %v, want 'resolve repo: boom'", err)
 		}
@@ -308,7 +493,7 @@ func TestRunUploadDependencyErrors(t *testing.T) {
 	t.Run("resolvePR error", func(t *testing.T) {
 		deps := baseDeps()
 		deps.resolvePR = func(*gh.Repo) (int, error) { return 0, errors.New("no PR") }
-		err := runUpload(0, []string{"f.png"}, "", false, "", "", io.Discard, io.Discard, deps)
+		err := runUpload(0, []string{"f.png"}, "", false, "", "", false, io.Discard, io.Discard, deps)
 		if err == nil || !strings.Contains(err.Error(), "resolve PR: no PR") {
 			t.Errorf("got %v, want 'resolve PR: no PR'", err)
 		}
@@ -317,7 +502,7 @@ func TestRunUploadDependencyErrors(t *testing.T) {
 	t.Run("expandFiles error", func(t *testing.T) {
 		deps := baseDeps()
 		deps.expandFiles = func([]string) ([]string, error) { return nil, errors.New("no files") }
-		err := runUpload(42, []string{"f.png"}, "", false, "", "", io.Discard, io.Discard, deps)
+		err := runUpload(42, []string{"f.png"}, "", false, "", "", false, io.Discard, io.Discard, deps)
 		if err == nil || !strings.Contains(err.Error(), "no files") {
 			t.Errorf("got %v, want 'no files'", err)
 		}
@@ -326,7 +511,7 @@ func TestRunUploadDependencyErrors(t *testing.T) {
 	t.Run("newGitClient error", func(t *testing.T) {
 		deps := baseDeps()
 		deps.newGitClient = func() (gitDataClient, error) { return nil, errors.New("no auth") }
-		err := runUpload(42, []string{"f.png"}, "", false, "", "", io.Discard, io.Discard, deps)
+		err := runUpload(42, []string{"f.png"}, "", false, "", "", false, io.Discard, io.Discard, deps)
 		if err == nil || !strings.Contains(err.Error(), "create git client: no auth") {
 			t.Errorf("got %v, want 'create git client: no auth'", err)
 		}
@@ -336,7 +521,7 @@ func TestRunUploadDependencyErrors(t *testing.T) {
 		deps := baseDeps()
 		gc := &fakeGitClient{err: errors.New("api 500")}
 		deps.newGitClient = func() (gitDataClient, error) { return gc, nil }
-		err := runUpload(42, []string{"f.png"}, "", false, "", "", io.Discard, io.Discard, deps)
+		err := runUpload(42, []string{"f.png"}, "", false, "", "", false, io.Discard, io.Discard, deps)
 		if err == nil || !strings.Contains(err.Error(), "push attachments: api 500") {
 			t.Errorf("got %v, want 'push attachments: api 500'", err)
 		}
@@ -345,7 +530,7 @@ func TestRunUploadDependencyErrors(t *testing.T) {
 	t.Run("newCmtClient error under --comment", func(t *testing.T) {
 		deps := baseDeps()
 		deps.newCmtClient = func() (commentClient, error) { return nil, errors.New("no auth") }
-		err := runUpload(42, []string{"f.png"}, "", true, "", "", io.Discard, io.Discard, deps)
+		err := runUpload(42, []string{"f.png"}, "", true, "", "", false, io.Discard, io.Discard, deps)
 		if err == nil || !strings.Contains(err.Error(), "create comment client: no auth") {
 			t.Errorf("got %v, want 'create comment client: no auth'", err)
 		}
@@ -355,7 +540,7 @@ func TestRunUploadDependencyErrors(t *testing.T) {
 		deps := baseDeps()
 		cc := &fakeCmtClient{err: errors.New("forbidden")}
 		deps.newCmtClient = func() (commentClient, error) { return cc, nil }
-		err := runUpload(42, []string{"f.png"}, "", true, "", "", io.Discard, io.Discard, deps)
+		err := runUpload(42, []string{"f.png"}, "", true, "", "", false, io.Discard, io.Discard, deps)
 		if err == nil || !strings.Contains(err.Error(), "upsert comment: forbidden") {
 			t.Errorf("got %v, want 'upsert comment: forbidden'", err)
 		}

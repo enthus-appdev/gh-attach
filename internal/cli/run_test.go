@@ -485,6 +485,30 @@ func TestRunWithDepsFullFlow(t *testing.T) {
 		}
 	})
 
+	t.Run("filename with spaces is URL-encoded in stderr output", func(t *testing.T) {
+		git := &fakeGitClient{
+			paths: []gh.AttachmentPath{{Path: "Screen Shot 2026.png"}},
+			sha:   "sha",
+		}
+		deps := happyDeps(git, &fakeCmtClient{})
+		var stdout, stderr bytes.Buffer
+		code := runWithDeps([]string{"42", "Screen Shot 2026.png"}, &stdout, &stderr, deps)
+		if code != 0 {
+			t.Fatalf("exit = %d, want 0. stderr=%s", code, stderr.String())
+		}
+		// stderr URL should be encoded
+		if !strings.Contains(stderr.String(), "Screen%20Shot%202026.png?raw=true") {
+			t.Errorf("stderr missing URL-encoded filename:\n%s", stderr.String())
+		}
+		// stdout markdown should have URL-encoded URL but raw alt text (from gh.FormatSection)
+		if !strings.Contains(stdout.String(), "Screen%20Shot%202026.png?raw=true") {
+			t.Errorf("stdout missing URL-encoded filename in markdown:\n%s", stdout.String())
+		}
+		if !strings.Contains(stdout.String(), "![Screen Shot 2026.png]") {
+			t.Errorf("stdout missing raw display name in alt:\n%s", stdout.String())
+		}
+	})
+
 	t.Run("success with auto-detect PR", func(t *testing.T) {
 		git := &fakeGitClient{
 			paths: []gh.AttachmentPath{{Path: "f.png"}},

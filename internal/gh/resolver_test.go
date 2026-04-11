@@ -103,6 +103,7 @@ func TestResolveRepoFromOverride(t *testing.T) {
 		{name: "HTTPS URL", override: "https://github.com/foo/bar", wantOwner: "foo", wantName: "bar"},
 		{name: "HTTP URL", override: "http://github.com/foo/bar.git", wantOwner: "foo", wantName: "bar"},
 		{name: "bare github.com/ prefix", override: "github.com/foo/bar", wantOwner: "foo", wantName: "bar"},
+		{name: "ssh:// URL", override: "ssh://git@github.com/foo/bar.git", wantOwner: "foo", wantName: "bar"},
 		{name: "invalid plain slug", override: "notvalid", wantErr: true},
 	}
 

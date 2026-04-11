@@ -24,6 +24,7 @@ func ResolveRepo(override string) (*Repo, error) {
 		// prefix checks (not `Contains(..., "github.com")`) so valid plain
 		// slugs like `foo/github.com-bar` aren't mis-routed as URLs.
 		if strings.HasPrefix(override, "git@") ||
+			strings.HasPrefix(override, "ssh://") ||
 			strings.HasPrefix(override, "http://") ||
 			strings.HasPrefix(override, "https://") ||
 			strings.HasPrefix(override, "github.com/") {

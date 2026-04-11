@@ -46,6 +46,35 @@ func TestFormatComment(t *testing.T) {
 		}
 	})
 
+	t.Run("filename with special characters is URL-encoded", func(t *testing.T) {
+		// Filenames can contain spaces, hashes, and non-ASCII characters.
+		// The rendered URL must URL-encode them so the link works in a
+		// browser; the display name (alt text) must stay unencoded so
+		// users see the original filename.
+		repo := &Repo{Owner: "enthus-appdev", Name: "negsoft-gui"}
+		paths := []AttachmentPath{
+			{Path: "Screen Shot 2026.png"},
+			{Path: "café#1.png"},
+		}
+		commitSHA := "abc1234"
+		body := formatComment(repo, paths, commitSHA, "")
+
+		// URL should be encoded
+		if !strings.Contains(body, "Screen%20Shot%202026.png?raw=true") {
+			t.Errorf("expected URL-encoded filename in body:\n%s", body)
+		}
+		if !strings.Contains(body, "caf%C3%A9%231.png?raw=true") {
+			t.Errorf("expected URL-encoded UTF-8 + hash in body:\n%s", body)
+		}
+		// Display name (alt text + table header) should be raw
+		if !strings.Contains(body, "![Screen Shot 2026.png]") {
+			t.Errorf("expected raw display name in image alt:\n%s", body)
+		}
+		if !strings.Contains(body, "| Screen Shot 2026.png |") {
+			t.Errorf("expected raw display name in table header:\n%s", body)
+		}
+	})
+
 	t.Run("single image no title", func(t *testing.T) {
 		repo := &Repo{Owner: "enthus-appdev", Name: "negsoft-gui"}
 		paths := []AttachmentPath{

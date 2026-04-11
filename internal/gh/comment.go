@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 )
 
@@ -55,8 +56,12 @@ func FormatSection(repo *Repo, paths []AttachmentPath, commitSHA, title string) 
 	}
 	var images []imageEntry
 	for _, p := range paths {
-		url := fmt.Sprintf("https://github.com/%s/%s/blob/%s/%s?raw=true", repo.Owner, repo.Name, commitSHA, p.Path)
-		images = append(images, imageEntry{name: p.Path, url: url})
+		// URL-encode the path segment so filenames with spaces, `#`,
+		// `?`, or other special characters produce valid URLs. Uses
+		// PathEscape (not QueryEscape) so that '/' would be preserved
+		// — though in practice p.Path is always a basename.
+		imageURL := fmt.Sprintf("https://github.com/%s/%s/blob/%s/%s?raw=true", repo.Owner, repo.Name, commitSHA, url.PathEscape(p.Path))
+		images = append(images, imageEntry{name: p.Path, url: imageURL})
 	}
 
 	cols := 2

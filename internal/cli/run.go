@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/url"
 	"strings"
 
 	"github.com/enthus-appdev/gh-attach/internal/gh"
@@ -191,9 +192,11 @@ func runUpload(number int, filePaths []string, title string, postComment bool, r
 
 	// Always emit the raw, directly-embeddable URLs to stderr so the user
 	// sees actionable references in their terminal even when stdout is piped.
+	// Filename is URL-encoded so files containing spaces, `#`, `?`, or
+	// non-ASCII characters produce valid, clickable URLs.
 	_, _ = fmt.Fprintln(stderr, "Uploaded:")
 	for _, p := range paths {
-		_, _ = fmt.Fprintf(stderr, "  https://github.com/%s/%s/blob/%s/%s?raw=true\n", repo.Owner, repo.Name, commitSHA, p.Path)
+		_, _ = fmt.Fprintf(stderr, "  https://github.com/%s/%s/blob/%s/%s?raw=true\n", repo.Owner, repo.Name, commitSHA, url.PathEscape(p.Path))
 	}
 
 	// Opt-in side-effect: also post/upsert the markdown as a PR/issue comment.

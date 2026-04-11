@@ -43,6 +43,37 @@ jobs:
           skip-cache: true
           problem-matchers: true
 
+  license:
+    name: License Check
+    runs-on: ubuntu-latest
+    # Skip drafts so WIP PRs don't burn minutes until they're ready.
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: ./go.mod
+          cache: false # gh-attach has zero external deps — nothing to cache
+
+      - name: Validate dependency licenses
+        uses: enthus-appdev/oss-actions/go-license-validator@v1
+        with:
+          # Forbidden licenses. The copyleft family (GPL*/LGPL*/AGPL)
+          # would force gh-attach to relicense or vendor-patch any dep
+          # that picks one up; the source-available set
+          # (SSPL/BUSL/Elastic/Commons-Clause) prevents the tool from
+          # being used in common commercial and SaaS contexts. Both
+          # groups are incompatible with the project's permissive MIT
+          # licensing, so anything from either family should block a
+          # merge. gh-attach currently has zero external dependencies
+          # so this check is pure future-proofing — it'll fire the
+          # moment a future PR brings in a dep with an incompatible
+          # license.
+          forbidden_licenses: "GPL-3.0;GPL-2.0;LGPL-3.0;LGPL-2.1;AGPL-3.0;SSPL-1.0;BUSL-1.1;Elastic-2.0;Commons-Clause"
+
   test:
     name: Go Test
     runs-on: ubuntu-latest

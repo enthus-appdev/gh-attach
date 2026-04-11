@@ -62,7 +62,7 @@ $ gh attach --json 123 screenshot.png | jq
   "namespace": "issue",
   "number": 123,
   "ref": "refs/uploads/issues/123",
-  "commit_sha": "abc1234def5678cafe",
+  "sha": "abc1234def5678cafe",
   "files": [
     {
       "name": "screenshot.png",

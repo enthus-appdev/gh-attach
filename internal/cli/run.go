@@ -5,7 +5,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"net/url"
 	"strings"
 
 	"github.com/enthus-appdev/gh-attach/internal/gh"
@@ -28,7 +27,7 @@ type uploadResult struct {
 	Number     int          `json:"number,omitempty"`
 	Key        string       `json:"key,omitempty"`
 	Ref        string       `json:"ref"`
-	CommitSHA  string       `json:"commit_sha"`
+	CommitSHA  string       `json:"sha"`
 	Files      []uploadFile `json:"files"`
 	Markdown   string       `json:"markdown"`
 	CommentURL string       `json:"comment_url,omitempty"`
@@ -244,7 +243,7 @@ func runUpload(number int, filePaths []string, title string, postComment bool, r
 
 	// Progress line (suppressed in JSON mode so stderr is quiet).
 	if !asJSON {
-		_, _ = fmt.Fprintf(stderr, "Uploading %d file(s) to %s in %s/%s...\n", len(files), target, repo.Owner, repo.Name)
+		_, _ = fmt.Fprintf(stderr, "Uploading %d file(s) to %s in %s...\n", len(files), target, repo)
 	}
 
 	// Push images to refs/<refPath> via Git Data API
@@ -279,7 +278,7 @@ func runUpload(number int, filePaths []string, title string, postComment bool, r
 
 	if asJSON {
 		result := uploadResult{
-			Repo:       repo.Owner + "/" + repo.Name,
+			Repo:       repo.String(),
 			Target:     target,
 			Ref:        "refs/" + refPath,
 			CommitSHA:  commitSHA,
@@ -297,7 +296,7 @@ func runUpload(number int, filePaths []string, title string, postComment bool, r
 		for _, p := range paths {
 			result.Files = append(result.Files, uploadFile{
 				Name: p.Path,
-				URL:  fmt.Sprintf("https://github.com/%s/%s/blob/%s/%s?raw=true", repo.Owner, repo.Name, commitSHA, url.PathEscape(p.Path)),
+				URL:  gh.EmbedURL(repo, commitSHA, p.Path),
 			})
 		}
 		enc := json.NewEncoder(stdout)
@@ -315,11 +314,12 @@ func runUpload(number int, filePaths []string, title string, postComment bool, r
 
 	// Always emit the raw, directly-embeddable URLs to stderr so the user
 	// sees actionable references in their terminal even when stdout is piped.
-	// Filename is URL-encoded so files containing spaces, `#`, `?`, or
-	// non-ASCII characters produce valid, clickable URLs.
+	// Filename is URL-encoded inside gh.EmbedURL so files containing
+	// spaces, `#`, `?`, or non-ASCII characters produce valid, clickable
+	// URLs.
 	_, _ = fmt.Fprintln(stderr, "Uploaded:")
 	for _, p := range paths {
-		_, _ = fmt.Fprintf(stderr, "  https://github.com/%s/%s/blob/%s/%s?raw=true\n", repo.Owner, repo.Name, commitSHA, url.PathEscape(p.Path))
+		_, _ = fmt.Fprintf(stderr, "  %s\n", gh.EmbedURL(repo, commitSHA, p.Path))
 	}
 
 	if postComment {

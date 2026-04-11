@@ -81,7 +81,7 @@ func runList(args []string, stdout, stderr io.Writer, deps runDeps) int {
 	}
 
 	if len(entries) == 0 {
-		_, _ = fmt.Fprintf(stderr, "No upload refs in %s/%s\n", repo.Owner, repo.Name)
+		_, _ = fmt.Fprintf(stderr, "No upload refs in %s\n", repo)
 		return 0
 	}
 
@@ -91,7 +91,7 @@ func runList(args []string, stdout, stderr io.Writer, deps runDeps) int {
 		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\n", e.Target, shortSHA(e.SHA), e.Namespace)
 	}
 	_ = tw.Flush()
-	_, _ = fmt.Fprintf(stderr, "\n%d upload ref(s) in %s/%s\n", len(entries), repo.Owner, repo.Name)
+	_, _ = fmt.Fprintf(stderr, "\n%d upload ref(s) in %s\n", len(entries), repo)
 	return 0
 }
 

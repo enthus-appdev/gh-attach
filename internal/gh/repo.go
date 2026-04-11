@@ -16,6 +16,14 @@ type Repo struct {
 	Name  string
 }
 
+// String returns the canonical "owner/name" form of a Repo and lets
+// callers use a *Repo directly in any fmt verb or any API that expects
+// a fmt.Stringer. Centralizing this avoids the ad-hoc
+// `repo.Owner + "/" + repo.Name` sprinkled across the CLI + gh layers.
+func (r *Repo) String() string {
+	return r.Owner + "/" + r.Name
+}
+
 // parseRepoFromRemote extracts owner/name from a git remote URL.
 func parseRepoFromRemote(remote string) (*Repo, error) {
 	// SSH: git@github.com:owner/repo.git

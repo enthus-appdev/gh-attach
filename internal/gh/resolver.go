@@ -43,7 +43,7 @@ func ResolveRepo(override string) (*Repo, error) {
 // It only makes sense inside a clone of the target repo; the CLI layer
 // guards against using it together with --repo or --key.
 func ResolvePR(repo *Repo) (int, error) {
-	out, err := execCommand("gh", "pr", "view", "--json", "number", "--repo", repo.Owner+"/"+repo.Name).Output()
+	out, err := execCommand("gh", "pr", "view", "--json", "number", "--repo", repo.String()).Output()
 	if err != nil {
 		return 0, fmt.Errorf("no PR found for current branch (pass an explicit PR or issue number): %w", err)
 	}

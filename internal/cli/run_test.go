@@ -285,7 +285,7 @@ func TestRunUpload_json_issue_mode(t *testing.T) {
 		t.Errorf("ref = %q, want refs/uploads/issues/42", parsed.Ref)
 	}
 	if parsed.CommitSHA != "abc1234def5678" {
-		t.Errorf("commit_sha = %q, want abc1234def5678", parsed.CommitSHA)
+		t.Errorf("sha = %q, want abc1234def5678", parsed.CommitSHA)
 	}
 	if len(parsed.Files) != 1 || parsed.Files[0].Name != "banner.png" {
 		t.Errorf("files = %+v, want [{Name:banner.png ...}]", parsed.Files)

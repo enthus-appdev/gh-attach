@@ -75,13 +75,80 @@ gh attach --key releases/v1.0/hero hero.png
 - `--comment` is not allowed (there's no PR/issue to comment on).
 - The cleanup workflow (see below) does **not** touch ad-hoc refs — they're user-managed.
 
-**Manual cleanup** when you're done with an ad-hoc upload:
+**Manual cleanup** when you're done with an ad-hoc upload — use `gh attach delete` (see [Managing uploads](#managing-uploads) below), or drop straight to the REST API:
 
 ```bash
 gh api -X DELETE repos/OWNER/NAME/git/refs/uploads/misc/KEY
 ```
 
 Deleting the ref orphans the blob storage and GitHub eventually GCs it.
+
+## Managing uploads
+
+Two in-tool commands for inspecting and removing existing upload refs. These are the ergonomic equivalents of raw `gh api` calls against `refs/uploads/*`.
+
+### `gh attach list`
+
+List every upload ref in the target repo, for both `refs/uploads/issues/*` (PR/issue-scoped) and `refs/uploads/misc/*` (ad-hoc) namespaces.
+
+```bash
+gh attach list
+```
+
+Example output:
+
+```
+TARGET           SHA        NAMESPACE
+#42              abc1234    issue
+#123             def5678    issue
+misc/design-v2   9876abc    misc
+misc/docs/arch   5555000    misc
+
+4 upload ref(s) in owner/repo
+```
+
+**Flags**:
+- `--repo OWNER/NAME` — target a specific repo instead of the current clone's origin
+- `--issues` — show only `refs/uploads/issues/*` refs (mutually exclusive with `--misc`)
+- `--misc` — show only `refs/uploads/misc/*` refs
+- `--json` — emit JSON instead of the text table, for scripting:
+
+```bash
+$ gh attach list --json
+[
+  {
+    "ref": "refs/uploads/misc/design-v2",
+    "sha": "9876abc...",
+    "namespace": "misc",
+    "target": "misc/design-v2",
+    "key": "design-v2"
+  }
+]
+```
+
+### `gh attach delete`
+
+Delete an upload ref. Takes either a positional `NUMBER` (to delete `refs/uploads/issues/NUMBER`) or `--key KEY` (to delete `refs/uploads/misc/KEY`), and prompts for confirmation by default.
+
+```bash
+# Delete an ad-hoc upload
+gh attach delete --key design-v2
+
+# Delete an issue/PR upload (rarely needed — the cleanup workflow handles this)
+gh attach delete 42
+
+# Skip the confirmation prompt (for scripts)
+gh attach delete --yes --key design-v2
+```
+
+**Flags**:
+- `--repo OWNER/NAME` — target a specific repo
+- `--key KEY` — ad-hoc target (mutually exclusive with positional `NUMBER`)
+- `--yes` / `-y` — skip the interactive confirmation prompt
+
+The confirmation prompt reads from stdin, so running `gh attach delete` in a non-interactive context (CI, piped input) without `--yes` will fail with a clear error asking you to pass `--yes`.
+
+Deleting a ref that doesn't exist exits 1 with `error: refs/... not found in OWNER/NAME`. Aborting the confirmation prompt (answering `n` or just pressing enter) exits 0 with `Aborted` — it's not an error, just a no-op.
 
 ### Composing with other tools
 

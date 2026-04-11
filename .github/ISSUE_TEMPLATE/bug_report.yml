@@ -18,9 +18,13 @@ body:
     attributes:
       label: gh-attach version
       description: |
-        Output of `gh extension list | grep gh-attach`. If you're running
-        a local working copy (`gh extension install .`), note that too.
-      placeholder: "gh attach  enthus-appdev/gh-attach  v0.6.0"
+        Output of `gh extension list | grep gh-attach`. The line has
+        three tab-separated columns: the **invocation** (`gh attach`
+        with a space, not `gh-attach`), the source repo
+        (`enthus-appdev/gh-attach`), and the version. Paste the whole
+        line. If you're running a local working copy
+        (`gh extension install .`), note that too.
+      placeholder: "gh attach   enthus-appdev/gh-attach   v0.6.0"
     validations:
       required: true
 

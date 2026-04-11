@@ -11,7 +11,20 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
+
+// httpClient is the shared HTTP client used by every GitDataClient and
+// CommentClient request. A timeout is mandatory for a CLI tool — without
+// it a stalled upload or an unresponsive GitHub edge could cause the
+// process to block indefinitely (particularly painful in CI / scripts).
+//
+// 60s is the longest any normal gh-attach operation should take: the
+// biggest blob upload is bounded by GitHub's per-blob size limit, and
+// every other call (list refs, delete ref, upsert comment) is a small
+// JSON request/response. Increase only if a legitimate operation starts
+// getting killed.
+var httpClient = &http.Client{Timeout: 60 * time.Second}
 
 // AttachmentPath holds the tree-relative path of an uploaded attachment.
 // Stored under refs/uploads/<refPath>, the tree contains files at top level
@@ -199,7 +212,7 @@ func (c *GitDataClient) get(path string, result interface{}) error {
 	req.Header.Set("Authorization", "token "+c.Token)
 	req.Header.Set("Accept", "application/vnd.github+json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return err
 	}
@@ -228,7 +241,7 @@ func (c *GitDataClient) post(path string, payload interface{}, result interface{
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return err
 	}
@@ -254,7 +267,7 @@ func (c *GitDataClient) postNoResponse(path string, payload interface{}) error {
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return err
 	}
@@ -280,7 +293,7 @@ func (c *GitDataClient) patch(path string, payload interface{}) error {
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return err
 	}
@@ -301,7 +314,7 @@ func (c *GitDataClient) httpDelete(path string) error {
 	req.Header.Set("Authorization", "token "+c.Token)
 	req.Header.Set("Accept", "application/vnd.github+json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return err
 	}

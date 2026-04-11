@@ -112,6 +112,10 @@ func TestRunDelete_arg_conflicts(t *testing.T) {
 		{name: "no NUMBER or --key", args: []string{"--yes"}, errSubstr: "specify a PR/issue NUMBER or --key"},
 		{name: "NUMBER + --key", args: []string{"--yes", "--key", "foo", "42"}, errSubstr: "cannot combine NUMBER with --key"},
 		{name: "invalid --key", args: []string{"--yes", "--key", "123"}, errSubstr: "purely numeric"},
+		{name: "extra positional after NUMBER", args: []string{"--yes", "42", "extra"}, errSubstr: "unexpected extra argument(s): extra"},
+		{name: "extra positional after --key", args: []string{"--yes", "--key", "foo", "garbage"}, errSubstr: "unexpected extra argument(s): garbage"},
+		{name: "multiple extra positionals", args: []string{"--yes", "42", "a", "b", "c"}, errSubstr: "unexpected extra argument(s): a b c"},
+		{name: "garbage with no NUMBER or --key", args: []string{"--yes", "foo"}, errSubstr: "unexpected extra argument(s): foo"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

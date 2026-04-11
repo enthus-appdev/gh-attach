@@ -38,9 +38,15 @@ func runDelete(args []string, stdin io.Reader, stdout, stderr io.Writer, deps ru
 		return 1
 	}
 
-	// Extract the positional NUMBER (if any).
+	// Extract the positional NUMBER (if any). Unlike the upload flow,
+	// delete takes at most one positional — reject any extras so the
+	// user sees a clear error instead of silently dropping their input.
 	positional := fs.Args()
-	number, _ := parseArgs(positional)
+	number, remaining := parseArgs(positional)
+	if len(remaining) > 0 {
+		_, _ = fmt.Fprintf(stderr, "error: unexpected extra argument(s): %s\n", strings.Join(remaining, " "))
+		return 1
+	}
 
 	if number != 0 && *key != "" {
 		_, _ = fmt.Fprintln(stderr, "error: cannot combine NUMBER with --key — they target different ref namespaces")

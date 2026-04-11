@@ -132,7 +132,7 @@ func (c *CommentClient) findMarkerComment(prefix string, prNumber int) (int, str
 	req.Header.Set("Authorization", "token "+c.Token)
 	req.Header.Set("Accept", "application/vnd.github+json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return 0, "", "", err
 	}
@@ -172,7 +172,7 @@ func (c *CommentClient) createComment(prefix string, prNumber int, body string) 
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return "", err
 	}
@@ -204,7 +204,7 @@ func (c *CommentClient) updateComment(prefix string, commentID int, body string)
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return "", err
 	}

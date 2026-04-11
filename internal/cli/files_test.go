@@ -2,6 +2,7 @@ package cli
 
 import (
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -268,6 +269,136 @@ func TestMaterializeStdin(t *testing.T) {
 		}
 		if unwrapped := errors.Unwrap(err); unwrapped == nil || unwrapped.Error() != "boom" {
 			t.Errorf("expected wrapped cause %q, got %v", "boom", unwrapped)
+		}
+	})
+}
+
+// fakeWriteCloser is a test double for the io.WriteCloser returned by
+// stdinFS.create. Callers pick which of Write or Close should fail by
+// setting writeErr / closeErr; unset methods behave as no-ops.
+type fakeWriteCloser struct {
+	writeErr error
+	closeErr error
+	written  int
+}
+
+func (f *fakeWriteCloser) Write(p []byte) (int, error) {
+	if f.writeErr != nil {
+		return 0, f.writeErr
+	}
+	f.written += len(p)
+	return len(p), nil
+}
+func (f *fakeWriteCloser) Close() error { return f.closeErr }
+
+// TestMaterializeStdinWith exercises the stdinFS injection seam so the
+// MkdirTemp / Create / Close error branches — which OS-level fault
+// injection can't reach cleanly — get real coverage. The happy path
+// and the io.Copy error branch are covered by TestMaterializeStdin
+// above, which calls the real materializeStdin wrapper.
+func TestMaterializeStdinWith(t *testing.T) {
+	t.Run("mkdirTemp error", func(t *testing.T) {
+		fs := stdinFS{
+			mkdirTemp: func(_, _ string) (string, error) {
+				return "", errors.New("no space")
+			},
+			create: func(_ string) (io.WriteCloser, error) {
+				t.Fatal("create should not be called when mkdirTemp fails")
+				return nil, nil
+			},
+		}
+		path, cleanup, err := materializeStdinWith(fs, strings.NewReader("x"), "f.bin")
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if !strings.Contains(err.Error(), "create temp dir: no space") {
+			t.Errorf("error = %q, want 'create temp dir: no space'", err.Error())
+		}
+		if path != "" {
+			t.Errorf("expected empty path, got %q", path)
+		}
+		if cleanup != nil {
+			t.Error("expected nil cleanup (caller cannot defer it)")
+		}
+	})
+
+	t.Run("create error cleans up the temp dir", func(t *testing.T) {
+		// Use real MkdirTemp so we can assert the created dir gets
+		// removed when create fails — a leak here would drop temp
+		// directories on every failed upload.
+		tmpDirHolder := ""
+		fs := stdinFS{
+			mkdirTemp: func(dir, pattern string) (string, error) {
+				d, err := os.MkdirTemp(dir, pattern)
+				tmpDirHolder = d
+				return d, err
+			},
+			create: func(_ string) (io.WriteCloser, error) {
+				return nil, errors.New("permission denied")
+			},
+		}
+		_, _, err := materializeStdinWith(fs, strings.NewReader("x"), "f.bin")
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if !strings.Contains(err.Error(), "create temp file: permission denied") {
+			t.Errorf("error = %q", err.Error())
+		}
+		if _, statErr := os.Stat(tmpDirHolder); !os.IsNotExist(statErr) {
+			t.Errorf("temp dir %q should have been cleaned up, stat err = %v", tmpDirHolder, statErr)
+		}
+	})
+
+	t.Run("close error is wrapped", func(t *testing.T) {
+		// A WriteCloser whose Write succeeds but Close fails drives the
+		// final `if err := f.Close(); err != nil` branch.
+		tmpDirHolder := ""
+		fs := stdinFS{
+			mkdirTemp: func(dir, pattern string) (string, error) {
+				d, err := os.MkdirTemp(dir, pattern)
+				tmpDirHolder = d
+				return d, err
+			},
+			create: func(_ string) (io.WriteCloser, error) {
+				return &fakeWriteCloser{closeErr: errors.New("disk full")}, nil
+			},
+		}
+		_, _, err := materializeStdinWith(fs, strings.NewReader("payload"), "f.bin")
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if !strings.Contains(err.Error(), "close temp file: disk full") {
+			t.Errorf("error = %q", err.Error())
+		}
+		if _, statErr := os.Stat(tmpDirHolder); !os.IsNotExist(statErr) {
+			t.Errorf("temp dir %q should have been cleaned up, stat err = %v", tmpDirHolder, statErr)
+		}
+	})
+
+	t.Run("write error from the fake WriteCloser also exercises io.Copy error", func(t *testing.T) {
+		// Belt-and-suspenders for the io.Copy branch via a failing
+		// WriteCloser instead of a failing Reader. Confirms the error
+		// wrapping is symmetric regardless of which side fails.
+		tmpDirHolder := ""
+		fs := stdinFS{
+			mkdirTemp: func(dir, pattern string) (string, error) {
+				d, err := os.MkdirTemp(dir, pattern)
+				tmpDirHolder = d
+				return d, err
+			},
+			create: func(_ string) (io.WriteCloser, error) {
+				return &fakeWriteCloser{writeErr: errors.New("short write")}, nil
+			},
+		}
+		_, _, err := materializeStdinWith(fs, strings.NewReader("payload"), "f.bin")
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if !strings.Contains(err.Error(), "read stdin: short write") {
+			t.Errorf("error = %q", err.Error())
+		}
+		if _, statErr := os.Stat(tmpDirHolder); !os.IsNotExist(statErr) {
+			t.Errorf("temp dir should have been cleaned up, stat err = %v", statErr)
 		}
 	})
 }

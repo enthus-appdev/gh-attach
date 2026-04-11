@@ -66,6 +66,26 @@ func validateName(name string) error {
 	return nil
 }
 
+// stdinFS is the filesystem subset that materializeStdinWith needs.
+// Tests override these fields to exercise error branches (MkdirTemp,
+// Create, and Close failures) that real OS fault injection can't
+// reach cleanly. Production code always uses defaultStdinFS.
+type stdinFS struct {
+	mkdirTemp func(dir, pattern string) (string, error)
+	create    func(name string) (io.WriteCloser, error)
+}
+
+// defaultStdinFS wires materializeStdin to the real os primitives.
+// The create lambda exists because os.Create returns *os.File and we
+// want the narrower io.WriteCloser so tests can supply fakes without
+// implementing every *os.File method.
+var defaultStdinFS = stdinFS{
+	mkdirTemp: os.MkdirTemp,
+	create: func(name string) (io.WriteCloser, error) {
+		return os.Create(name)
+	},
+}
+
 // materializeStdin drains stdin into a fresh file named `name` inside
 // a new temp directory and returns the path plus a cleanup closure
 // the caller should defer.
@@ -79,13 +99,21 @@ func validateName(name string) error {
 // Callers must validate `name` (via validateName) before calling
 // this — materializeStdin trusts it to be a safe basename.
 func materializeStdin(stdin io.Reader, name string) (string, func(), error) {
-	tmpDir, err := os.MkdirTemp("", "gh-attach-stdin-*")
+	return materializeStdinWith(defaultStdinFS, stdin, name)
+}
+
+// materializeStdinWith is the testable variant that accepts an
+// injectable stdinFS. Production calls go through materializeStdin,
+// which passes defaultStdinFS. Tests pass a stdinFS with fakes to
+// cover the MkdirTemp / Create / Close error branches.
+func materializeStdinWith(fs stdinFS, stdin io.Reader, name string) (string, func(), error) {
+	tmpDir, err := fs.mkdirTemp("", "gh-attach-stdin-*")
 	if err != nil {
 		return "", nil, fmt.Errorf("create temp dir: %w", err)
 	}
 	cleanup := func() { _ = os.RemoveAll(tmpDir) }
 	tmpPath := filepath.Join(tmpDir, name)
-	f, err := os.Create(tmpPath)
+	f, err := fs.create(tmpPath)
 	if err != nil {
 		cleanup()
 		return "", nil, fmt.Errorf("create temp file: %w", err)

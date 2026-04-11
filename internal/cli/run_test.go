@@ -744,6 +744,27 @@ func TestRunUpload_stdin_via_runWithDeps(t *testing.T) {
 	}
 }
 
+func TestRunUpload_stdin_read_error(t *testing.T) {
+	// A stdin reader that errors must bubble the materializeStdin
+	// failure out of runUpload without ever calling PushAttachments.
+	// errReader is defined in files_test.go (same package).
+	git := &fakeGitClient{}
+	deps := happyDeps(git, &fakeCmtClient{})
+	deps.stdin = errReader{}
+
+	var stdout, stderr bytes.Buffer
+	err := runUpload(42, []string{"-"}, "", false, "", "", "shot.png", false, &stdout, &stderr, deps)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "read stdin") {
+		t.Errorf("error = %q, want substring 'read stdin'", err.Error())
+	}
+	if git.called {
+		t.Error("PushAttachments should not have been called after a stdin read error")
+	}
+}
+
 func TestRunUpload_stdin_arg_conflicts(t *testing.T) {
 	tests := []struct {
 		name      string

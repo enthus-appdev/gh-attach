@@ -387,3 +387,174 @@ func TestUpsertCommentErrorPaths(t *testing.T) {
 	})
 }
 
+// ---------------------------------------------------------------------
+// isImage + FormatSection non-image rendering
+// ---------------------------------------------------------------------
+
+func TestIsImage(t *testing.T) {
+	t.Run("image extensions are recognized", func(t *testing.T) {
+		good := []string{
+			"shot.png", "photo.jpg", "photo.jpeg", "anim.gif",
+			"small.webp", "icon.svg", "classic.bmp", "favicon.ico",
+			"anim.apng", "modern.avif", "iphone.heic", "same.heif",
+			// Case-insensitive match.
+			"SCREAM.PNG", "IMG_1234.JPG", "Camera.JpeG",
+			// Spaces and non-ASCII in the base are fine; only the
+			// extension is inspected.
+			"Screen Shot 2026.png", "café#1.jpeg",
+		}
+		for _, n := range good {
+			if !isImage(n) {
+				t.Errorf("isImage(%q) = false, want true", n)
+			}
+		}
+	})
+	t.Run("non-image extensions are rejected", func(t *testing.T) {
+		bad := []string{
+			"doc.pdf", "report.md", "notes.txt", "archive.zip",
+			"log.log", "data.csv", "trace.har", "video.mp4",
+			"bundle.tar.gz", "Makefile", // no extension at all
+			"README",                  // no extension
+			"script.sh", "config.yml", // text formats
+			// Double extension: only the last one counts.
+			"shot.png.bak",
+			// Leading-dot file with no extension is not an image.
+			".hidden",
+		}
+		for _, n := range bad {
+			if isImage(n) {
+				t.Errorf("isImage(%q) = true, want false", n)
+			}
+		}
+	})
+}
+
+func TestFormatSection_non_image_files(t *testing.T) {
+	// A pure non-image upload (PDFs, logs, archives) must render as
+	// plain links, not broken image embeds.
+	repo := &Repo{Owner: "owner", Name: "repo"}
+	paths := []AttachmentPath{
+		{Path: "report.pdf"},
+		{Path: "trace.log"},
+	}
+	body := FormatSection(repo, paths, "abc1234", "")
+
+	// No image-embed syntax anywhere.
+	if strings.Contains(body, "![report.pdf") {
+		t.Errorf("non-image rendered as image embed:\n%s", body)
+	}
+	if strings.Contains(body, "![trace.log") {
+		t.Errorf("non-image rendered as image embed:\n%s", body)
+	}
+
+	// Both files rendered as plain markdown links.
+	if !strings.Contains(body, "[report.pdf](https://github.com/owner/repo/blob/abc1234/report.pdf?raw=true)") {
+		t.Errorf("missing plain link for report.pdf:\n%s", body)
+	}
+	if !strings.Contains(body, "[trace.log](https://github.com/owner/repo/blob/abc1234/trace.log?raw=true)") {
+		t.Errorf("missing plain link for trace.log:\n%s", body)
+	}
+	// Single-column table header for each file.
+	if !strings.Contains(body, "| report.pdf |") {
+		t.Errorf("missing table header for report.pdf:\n%s", body)
+	}
+}
+
+func TestFormatSection_mixed_image_and_non_image(t *testing.T) {
+	// Mixed uploads must render images in the image table and
+	// non-images in the separate plain-link table below it.
+	repo := &Repo{Owner: "owner", Name: "repo"}
+	paths := []AttachmentPath{
+		{Path: "before.png"},
+		{Path: "report.pdf"},
+		{Path: "after.png"},
+		{Path: "trace.log"},
+	}
+	body := FormatSection(repo, paths, "abc1234", "Mixed upload")
+
+	// Title is rendered once, at the top.
+	if !strings.Contains(body, "**Mixed upload**") {
+		t.Errorf("missing title:\n%s", body)
+	}
+
+	// Images use the embed syntax.
+	if !strings.Contains(body, "![before.png](") {
+		t.Errorf("before.png should render as image embed:\n%s", body)
+	}
+	if !strings.Contains(body, "![after.png](") {
+		t.Errorf("after.png should render as image embed:\n%s", body)
+	}
+
+	// Non-images use the link syntax (NOT the embed syntax).
+	if strings.Contains(body, "![report.pdf") {
+		t.Errorf("report.pdf should NOT render as image embed:\n%s", body)
+	}
+	if strings.Contains(body, "![trace.log") {
+		t.Errorf("trace.log should NOT render as image embed:\n%s", body)
+	}
+	if !strings.Contains(body, "[report.pdf](https://github.com/owner/repo/blob/abc1234/report.pdf?raw=true)") {
+		t.Errorf("missing plain link for report.pdf:\n%s", body)
+	}
+	if !strings.Contains(body, "[trace.log](https://github.com/owner/repo/blob/abc1234/trace.log?raw=true)") {
+		t.Errorf("missing plain link for trace.log:\n%s", body)
+	}
+
+	// With two images, they go into a single 2-column row (existing
+	// layout for multiple images). Assert the 2-column header appears.
+	if !strings.Contains(body, "| before.png | after.png |") {
+		t.Errorf("expected 2-column image header:\n%s", body)
+	}
+
+	// Images come BEFORE non-images in the output.
+	imgIdx := strings.Index(body, "![before.png]")
+	pdfIdx := strings.Index(body, "[report.pdf](")
+	if imgIdx < 0 || pdfIdx < 0 {
+		t.Fatalf("missing expected substrings, body:\n%s", body)
+	}
+	if imgIdx > pdfIdx {
+		t.Errorf("images should render before non-images, got img=%d pdf=%d\n%s", imgIdx, pdfIdx, body)
+	}
+}
+
+func TestFormatSection_case_insensitive_image_extensions(t *testing.T) {
+	// Screenshots from iPhone / macOS often have uppercase extensions
+	// like `IMG_1234.HEIC` or `Photo.JPG`. They must be treated as
+	// images (render as embed, not link).
+	repo := &Repo{Owner: "owner", Name: "repo"}
+	paths := []AttachmentPath{
+		{Path: "IMG_1234.HEIC"},
+		{Path: "Photo.JPG"},
+	}
+	body := FormatSection(repo, paths, "sha", "")
+
+	if !strings.Contains(body, "![IMG_1234.HEIC](") {
+		t.Errorf("uppercase .HEIC should render as image:\n%s", body)
+	}
+	if !strings.Contains(body, "![Photo.JPG](") {
+		t.Errorf("uppercase .JPG should render as image:\n%s", body)
+	}
+	// Neither should appear as a plain link.
+	if strings.Contains(body, "[IMG_1234.HEIC](") && !strings.Contains(body, "![IMG_1234.HEIC](") {
+		t.Errorf("IMG_1234.HEIC rendered as link, want image embed:\n%s", body)
+	}
+}
+
+func TestFormatSection_single_non_image(t *testing.T) {
+	// Single non-image upload produces one link row, no image table
+	// at all. Confirms the "images section absent" path doesn't
+	// leave stray table headers or empty rows.
+	repo := &Repo{Owner: "owner", Name: "repo"}
+	paths := []AttachmentPath{{Path: "release-notes.pdf"}}
+	body := FormatSection(repo, paths, "sha", "")
+
+	if strings.Contains(body, "![release-notes.pdf") {
+		t.Errorf("single non-image rendered as image embed:\n%s", body)
+	}
+	if !strings.Contains(body, "[release-notes.pdf](https://github.com/owner/repo/blob/sha/release-notes.pdf?raw=true)") {
+		t.Errorf("missing plain link:\n%s", body)
+	}
+	if !strings.Contains(body, "| release-notes.pdf |") {
+		t.Errorf("missing table header:\n%s", body)
+	}
+}
+

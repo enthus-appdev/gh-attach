@@ -1,0 +1,18 @@
+# Disable the "Open a blank issue" link at the bottom of the new-issue
+# picker — every issue goes through a template so we get consistent,
+# actionable reports. Contributors who genuinely need a blank issue
+# can still pick "Bug report" and leave fields empty; the goal is to
+# avoid accidental one-line issues that force maintainers to ask for
+# every missing piece of context.
+blank_issues_enabled: false
+
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/enthus-appdev/gh-attach/security/advisories/new
+    about: Do not file security issues publicly. Use GitHub Private Vulnerability Reporting so the report stays private until a fix is out.
+  - name: Read the contributing guide
+    url: https://github.com/enthus-appdev/gh-attach/blob/main/CONTRIBUTING.md
+    about: Dev workflow, build + test commands, commit conventions, and how to structure a PR.
+  - name: Read the Code of Conduct
+    url: https://github.com/enthus-appdev/gh-attach/blob/main/CODE_OF_CONDUCT.md
+    about: This project follows the Contributor Covenant. All issues, PRs, and discussions are governed by it.

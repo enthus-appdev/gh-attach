@@ -1,0 +1,102 @@
+name: Bug report
+description: Something in gh-attach is broken or behaves unexpectedly
+title: "bug: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug report. A clear report
+        with reproduction steps and version info usually gets a faster fix.
+
+        **Security issues**: do **not** file public bug reports for
+        security problems. See the [security policy](https://github.com/enthus-appdev/gh-attach/blob/main/SECURITY.md)
+        for the private reporting flow.
+
+  - type: input
+    id: gh-attach-version
+    attributes:
+      label: gh-attach version
+      description: |
+        Output of `gh extension list | grep gh-attach`. If you're running
+        a local working copy (`gh extension install .`), note that too.
+      placeholder: "gh attach  enthus-appdev/gh-attach  v0.6.0"
+    validations:
+      required: true
+
+  - type: input
+    id: gh-version
+    attributes:
+      label: gh CLI version
+      description: Output of `gh --version` (first line is enough).
+      placeholder: "gh version 2.63.2 (2024-12-05)"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      description: Pick the platform where you observed the bug.
+      options:
+        - macOS
+        - Linux
+        - Windows
+        - Other / multiple (describe below)
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: |
+        Describe the behavior you observed. Include any error messages,
+        unexpected output, or wrong rendering.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect to happen?
+      description: How should it have behaved?
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: |
+        The exact command line you ran, any relevant files, and any
+        output. Treat this as "what a maintainer needs to type to see
+        the same thing you saw."
+      render: shell
+      placeholder: |
+        # example
+        gh attach 42 shot.png
+        # → unexpected error: ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Full error output (optional)
+      description: |
+        Complete stderr from the failing command. Remove any tokens,
+        cookies, or other secrets before pasting.
+      render: shell
+    validations:
+      required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context (optional)
+      description: |
+        Anything else that helps — recent changes, workarounds you've
+        tried, whether the bug reproduces on a clean install, etc.
+    validations:
+      required: false

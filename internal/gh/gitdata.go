@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -31,6 +32,22 @@ var httpClient = &http.Client{Timeout: 60 * time.Second}
 // keyed by basename, so Path doubles as both the tree path and the display name.
 type AttachmentPath struct {
 	Path string // e.g. "screenshot.png"
+}
+
+// EmbedURL returns the raw-blob GitHub URL that renders as an inline
+// image when used in markdown, Slack, Discord, or pasted into a
+// browser. The `path` component is URL-encoded via url.PathEscape so
+// filenames containing spaces, `#`, `?`, or non-ASCII characters
+// produce valid, clickable URLs. Callers pass the raw basename as
+// `path`; nothing else in the URL is encoded.
+//
+// Centralizing this here means the CLI stderr URL list, the CLI JSON
+// output, and FormatSection's markdown table all construct identical
+// URLs. Drifting from each other has historically been a source of
+// bugs (see the URL-encoding fix in #15's review cycle).
+func EmbedURL(repo *Repo, commitSHA, path string) string {
+	return fmt.Sprintf("https://github.com/%s/blob/%s/%s?raw=true",
+		repo, commitSHA, url.PathEscape(path))
 }
 
 // RefEntry is a parsed view of a single upload ref returned by ListRefs.

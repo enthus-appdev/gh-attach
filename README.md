@@ -43,9 +43,52 @@ gh attach --repo https://github.com/enthus-appdev/gh-attach 123 screenshot.png
 # Ad-hoc upload with no PR or issue (see "Ad-hoc uploads" below)
 gh attach --key design-v2 mockup.png
 gh attach --key docs/arch-diagram diagram.png
+
+# Emit a JSON result object instead of the markdown table (see below)
+gh attach --json 123 screenshot.png
 ```
 
 By default `gh attach` reads the target repo from the current clone's `origin` remote. Pass `--repo OWNER/NAME` (or a full GitHub URL) to target a different repo or to run from outside any git clone. Whenever `--repo` is used, `NUMBER` or `--key` must be passed explicitly — PR auto-detection only works inside a clone of the target repo.
+
+### JSON output
+
+Pass `--json` to get a structured result object on stdout instead of the markdown table. Stderr is suppressed in JSON mode (no progress line, no `Uploaded:` URL list) so the output is pipe-friendly:
+
+```bash
+$ gh attach --json 123 screenshot.png | jq
+{
+  "repo": "owner/repo",
+  "target": "#123",
+  "namespace": "issue",
+  "number": 123,
+  "ref": "refs/uploads/issues/123",
+  "sha": "abc1234def5678cafe",
+  "files": [
+    {
+      "name": "screenshot.png",
+      "url": "https://github.com/owner/repo/blob/abc1234def5678cafe/screenshot.png?raw=true"
+    }
+  ],
+  "markdown": "| screenshot.png |\n|---|\n| ![screenshot.png](...) |"
+}
+```
+
+Key-mode uploads populate `key` and `namespace: "misc"` instead of `number`/`"issue"`. With `--comment`, the JSON gains a `comment_url` field with the URL of the upserted comment. Both `number`/`key` and `comment_url` use `omitempty`, so consumers see exactly the relevant fields and nothing else.
+
+Useful for scripting:
+
+```bash
+# Upload + extract just the URL
+URL=$(gh attach --json 123 file.png | jq -r '.files[0].url')
+
+# Upload + capture the commit SHA for later reference
+SHA=$(gh attach --json --key design-v2 mockup.png | jq -r '.commit_sha')
+
+# Use the rendered markdown as-is (bypasses the `| jq -r` for CLI composition)
+MARKDOWN=$(gh attach --json 123 file.png | jq -r '.markdown')
+```
+
+On failure, `--json` still exits 1 and writes the error to stderr as plain text — the shape is "JSON on stdout means success, check exit code before parsing". If `--comment` is used with `--json` and the comment post fails after a successful upload, the whole operation exits 1 with no JSON on stdout (upload succeeded on GitHub, but the consumer loses the reference in stdout — break the operation into two steps with a follow-up `gh pr comment` if partial-success handling matters).
 
 ### Ad-hoc uploads (no PR or issue)
 

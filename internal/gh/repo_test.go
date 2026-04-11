@@ -1,6 +1,7 @@
 package gh
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -60,6 +61,56 @@ func TestParseRepoFromRemote(t *testing.T) {
 			}
 			if r.Name != tt.repo {
 				t.Errorf("name = %q, want %q", r.Name, tt.repo)
+			}
+		})
+	}
+}
+
+func TestRepoString(t *testing.T) {
+	r := &Repo{Owner: "enthus-appdev", Name: "gh-attach"}
+	if got := r.String(); got != "enthus-appdev/gh-attach" {
+		t.Errorf("String() = %q, want enthus-appdev/gh-attach", got)
+	}
+	// Ensure it satisfies fmt.Stringer so format verbs pick it up
+	// (prefixed so staticcheck doesn't flag the trivial Sprintf case).
+	if got := fmt.Sprintf("target=%s", r); got != "target=enthus-appdev/gh-attach" {
+		t.Errorf("fmt.Sprintf(target=%%s) = %q", got)
+	}
+}
+
+func TestEmbedURL(t *testing.T) {
+	repo := &Repo{Owner: "owner", Name: "repo"}
+	tests := []struct {
+		name    string
+		path    string
+		wantURL string
+	}{
+		{
+			name:    "simple filename",
+			path:    "screenshot.png",
+			wantURL: "https://github.com/owner/repo/blob/abc1234/screenshot.png?raw=true",
+		},
+		{
+			name:    "filename with space",
+			path:    "Screen Shot 2026.png",
+			wantURL: "https://github.com/owner/repo/blob/abc1234/Screen%20Shot%202026.png?raw=true",
+		},
+		{
+			name:    "filename with hash",
+			path:    "before#1.png",
+			wantURL: "https://github.com/owner/repo/blob/abc1234/before%231.png?raw=true",
+		},
+		{
+			name:    "non-ASCII filename",
+			path:    "café.png",
+			wantURL: "https://github.com/owner/repo/blob/abc1234/caf%C3%A9.png?raw=true",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := EmbedURL(repo, "abc1234", tt.path)
+			if got != tt.wantURL {
+				t.Errorf("EmbedURL = %q, want %q", got, tt.wantURL)
 			}
 		})
 	}

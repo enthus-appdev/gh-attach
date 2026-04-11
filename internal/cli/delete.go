@@ -81,7 +81,7 @@ func runDelete(args []string, stdin io.Reader, stdout, stderr io.Writer, deps ru
 
 	// Confirmation prompt unless --yes.
 	if !*yes {
-		_, _ = fmt.Fprintf(stderr, "About to delete refs/%s in %s/%s.\n", refPath, repo.Owner, repo.Name)
+		_, _ = fmt.Fprintf(stderr, "About to delete refs/%s in %s.\n", refPath, repo)
 		_, _ = fmt.Fprintf(stderr, "Proceed? [y/N]: ")
 		answer, err := readConfirmation(stdin)
 		if err != nil {
@@ -102,14 +102,14 @@ func runDelete(args []string, stdin io.Reader, stdout, stderr io.Writer, deps ru
 
 	if err := client.DeleteRef(repo, refPath); err != nil {
 		if errors.Is(err, gh.ErrNotFound) {
-			_, _ = fmt.Fprintf(stderr, "error: refs/%s: not found in %s/%s (%s)\n", refPath, repo.Owner, repo.Name, target)
+			_, _ = fmt.Fprintf(stderr, "error: refs/%s: not found in %s (%s)\n", refPath, repo, target)
 			return 1
 		}
 		_, _ = fmt.Fprintf(stderr, "error: delete ref: %v\n", err)
 		return 1
 	}
 
-	_, _ = fmt.Fprintf(stderr, "Deleted refs/%s in %s/%s\n", refPath, repo.Owner, repo.Name)
+	_, _ = fmt.Fprintf(stderr, "Deleted refs/%s in %s\n", refPath, repo)
 	return 0
 }
 

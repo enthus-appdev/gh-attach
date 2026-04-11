@@ -1,14 +1,45 @@
 package cli
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
-	"net/url"
 	"strings"
 
 	"github.com/enthus-appdev/gh-attach/internal/gh"
 )
+
+// uploadResult is the shape emitted to stdout when --json is passed.
+// It bundles everything a script might want: the repo context, the
+// namespace-tagged target, the fast-forward commit SHA, every
+// uploaded file's basename + raw-blob URL, the rendered markdown
+// (the same bare section that non-JSON mode prints), and the
+// upserted comment URL when --comment was supplied and succeeded.
+//
+// The `omitempty` tags keep the output predictable: consumers see
+// `number` for issue-mode uploads and `key` for misc-mode uploads
+// but never both, and `comment_url` appears only when relevant.
+type uploadResult struct {
+	Repo       string       `json:"repo"`
+	Target     string       `json:"target"`
+	Namespace  string       `json:"namespace"`
+	Number     int          `json:"number,omitempty"`
+	Key        string       `json:"key,omitempty"`
+	Ref        string       `json:"ref"`
+	CommitSHA  string       `json:"sha"`
+	Files      []uploadFile `json:"files"`
+	Markdown   string       `json:"markdown"`
+	CommentURL string       `json:"comment_url,omitempty"`
+}
+
+// uploadFile is one entry in uploadResult.Files. Name is the raw
+// basename (for display / alt text); URL is the URL-encoded
+// blob/<sha>/<file>?raw=true link that works in a browser.
+type uploadFile struct {
+	Name string `json:"name"`
+	URL  string `json:"url"`
+}
 
 // gitDataClient is the subset of gh.GitDataClient that the cli layer
 // needs. Defined as an interface here so tests can swap in a fake
@@ -92,6 +123,7 @@ func runWithDeps(args []string, stdin io.Reader, stdout, stderr io.Writer, deps 
 	postComment := fs.Bool("comment", false, "Also post (or upsert) the markdown as a PR/issue comment")
 	repoOverride := fs.String("repo", "", "Target repo as OWNER/NAME or a GitHub URL (default: origin of the current clone)")
 	key := fs.String("key", "", "Upload to an ad-hoc key under refs/uploads/misc/KEY instead of a PR/issue (mutually exclusive with NUMBER and --comment)")
+	asJSON := fs.Bool("json", false, "Emit a JSON result object instead of the markdown table (suppresses stderr progress + URL list)")
 
 	fs.Usage = func() {
 		_, _ = fmt.Fprintf(stderr, "Upload images to a GitHub PR or issue and print embeddable markdown to stdout.\n\n")
@@ -130,7 +162,7 @@ func runWithDeps(args []string, stdin io.Reader, stdout, stderr io.Writer, deps 
 		return 1
 	}
 
-	if err := runUpload(number, filePaths, *title, *postComment, *repoOverride, *key, stdout, stderr, deps); err != nil {
+	if err := runUpload(number, filePaths, *title, *postComment, *repoOverride, *key, *asJSON, stdout, stderr, deps); err != nil {
 		_, _ = fmt.Fprintf(stderr, "error: %v\n", err)
 		return 1
 	}
@@ -140,7 +172,18 @@ func runWithDeps(args []string, stdin io.Reader, stdout, stderr io.Writer, deps 
 // runUpload holds the post-flag-parse orchestration. It's split out
 // from Run so tests can exercise it with already-parsed flag values
 // and injected fake dependencies.
-func runUpload(number int, filePaths []string, title string, postComment bool, repoOverride, key string, stdout, stderr io.Writer, deps runDeps) error {
+//
+// In default (non-JSON) mode, stdout receives the rendered markdown
+// and stderr receives progress + the directly-embeddable URL list
+// (and, with --comment, a final `Commented:` line).
+//
+// In --json mode, stdout receives a single JSON uploadResult object
+// and stderr is silent unless something errors out. Consumers that
+// want partial-success handling (upload succeeded, --comment failed)
+// should break the operation into two steps: `gh attach ...` then
+// `gh pr comment` — a --comment failure here still exits 1 with no
+// JSON on stdout, by design.
+func runUpload(number int, filePaths []string, title string, postComment bool, repoOverride, key string, asJSON bool, stdout, stderr io.Writer, deps runDeps) error {
 	// Argument conflicts — fail fast before any network work.
 	if number != 0 && key != "" {
 		return fmt.Errorf("cannot combine NUMBER with --key — they target different ref namespaces")
@@ -198,7 +241,10 @@ func runUpload(number int, filePaths []string, title string, postComment bool, r
 		target = fmt.Sprintf("#%d", number)
 	}
 
-	_, _ = fmt.Fprintf(stderr, "Uploading %d file(s) to %s in %s/%s...\n", len(files), target, repo.Owner, repo.Name)
+	// Progress line (suppressed in JSON mode so stderr is quiet).
+	if !asJSON {
+		_, _ = fmt.Fprintf(stderr, "Uploading %d file(s) to %s in %s...\n", len(files), target, repo)
+	}
 
 	// Push images to refs/<refPath> via Git Data API
 	client, err := deps.newGitClient()
@@ -210,30 +256,73 @@ func runUpload(number int, filePaths []string, title string, postComment bool, r
 		return fmt.Errorf("push attachments: %w", err)
 	}
 
-	// Always emit the rendered markdown to stdout so the caller can embed
-	// it anywhere — PR body, Slack, issue template, pbcopy, etc.
+	// Render the markdown once. It's used either directly as stdout
+	// output (non-JSON mode) or embedded as a field in the JSON
+	// result (--json mode).
 	markdown := strings.TrimSpace(gh.FormatSection(repo, paths, commitSHA, title))
-	_, _ = fmt.Fprintln(stdout, markdown)
 
-	// Always emit the raw, directly-embeddable URLs to stderr so the user
-	// sees actionable references in their terminal even when stdout is piped.
-	// Filename is URL-encoded so files containing spaces, `#`, `?`, or
-	// non-ASCII characters produce valid, clickable URLs.
-	_, _ = fmt.Fprintln(stderr, "Uploaded:")
-	for _, p := range paths {
-		_, _ = fmt.Fprintf(stderr, "  https://github.com/%s/%s/blob/%s/%s?raw=true\n", repo.Owner, repo.Name, commitSHA, url.PathEscape(p.Path))
-	}
-
-	// Opt-in side-effect: also post/upsert the markdown as a PR/issue comment.
+	// Opt-in side-effect: also post/upsert the markdown as a PR/issue
+	// comment. Runs before the final stdout emit so the comment URL
+	// can be included in the JSON result when both flags are set.
+	var commentURL string
 	if postComment {
 		cc, err := deps.newCmtClient()
 		if err != nil {
 			return fmt.Errorf("create comment client: %w", err)
 		}
-		commentURL, err := cc.UpsertComment(repo, number, paths, commitSHA, title)
+		commentURL, err = cc.UpsertComment(repo, number, paths, commitSHA, title)
 		if err != nil {
 			return fmt.Errorf("upsert comment: %w", err)
 		}
+	}
+
+	if asJSON {
+		result := uploadResult{
+			Repo:       repo.String(),
+			Target:     target,
+			Ref:        "refs/" + refPath,
+			CommitSHA:  commitSHA,
+			Markdown:   markdown,
+			CommentURL: commentURL, // omitempty hides it when unset
+			Files:      make([]uploadFile, 0, len(paths)),
+		}
+		if key != "" {
+			result.Namespace = "misc"
+			result.Key = key
+		} else {
+			result.Namespace = "issue"
+			result.Number = number
+		}
+		for _, p := range paths {
+			result.Files = append(result.Files, uploadFile{
+				Name: p.Path,
+				URL:  gh.EmbedURL(repo, commitSHA, p.Path),
+			})
+		}
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(result); err != nil {
+			return fmt.Errorf("encode json: %w", err)
+		}
+		return nil
+	}
+
+	// Non-JSON mode: always emit the rendered markdown to stdout so
+	// the caller can embed it anywhere — PR body, Slack, issue
+	// template, pbcopy, etc.
+	_, _ = fmt.Fprintln(stdout, markdown)
+
+	// Always emit the raw, directly-embeddable URLs to stderr so the user
+	// sees actionable references in their terminal even when stdout is piped.
+	// Filename is URL-encoded inside gh.EmbedURL so files containing
+	// spaces, `#`, `?`, or non-ASCII characters produce valid, clickable
+	// URLs.
+	_, _ = fmt.Fprintln(stderr, "Uploaded:")
+	for _, p := range paths {
+		_, _ = fmt.Fprintf(stderr, "  %s\n", gh.EmbedURL(repo, commitSHA, p.Path))
+	}
+
+	if postComment {
 		_, _ = fmt.Fprintf(stderr, "Commented: %s\n", commentURL)
 	}
 

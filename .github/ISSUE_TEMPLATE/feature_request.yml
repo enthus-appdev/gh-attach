@@ -1,0 +1,65 @@
+name: Feature request
+description: Suggest a new feature or improvement for gh-attach
+title: "feat: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to suggest an improvement. For
+        anything non-trivial, it's usually worth discussing scope in
+        this issue **before** writing code — the maintainers would
+        rather talk through the shape up front than ask for a rewrite
+        during review.
+
+        For smaller tweaks (a new flag, a copy fix, a small format
+        improvement) you're welcome to open a PR directly and skip
+        this form.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem are you trying to solve?
+      description: |
+        Describe the use case or workflow that is currently awkward,
+        impossible, or more work than it should be. Concrete examples
+        are much more useful than abstract framing.
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: |
+        What would you like gh-attach to do? Include example commands,
+        flags, output, or JSON shapes if you can — it makes the
+        conversation much faster.
+      render: shell
+      placeholder: |
+        # example
+        gh attach ... --new-flag ...
+        # → ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered (optional)
+      description: |
+        Other approaches you've thought about and why they didn't fit.
+        Helps the maintainers understand the design space you've
+        already explored.
+    validations:
+      required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context (optional)
+      description: |
+        Screenshots, links to similar features in other tools, prior
+        art, or anything else that might help the discussion.
+    validations:
+      required: false

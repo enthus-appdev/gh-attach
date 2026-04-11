@@ -62,7 +62,11 @@ jobs:
           cache: false # gh-attach has zero external deps — nothing to cache
 
       - name: Test with coverage
-        run: go test -coverprofile=cover.out ./...
+        # -coverpkg=./internal/... limits coverage measurement to the
+        # internal packages that actually contain logic. cmd/gh-attach
+        # is a 3-statement entry-point wrapper; including it would
+        # drag the total down for no meaningful reason.
+        run: go test -coverpkg=./internal/... -coverprofile=cover.out ./...
 
       - name: Archive code coverage results
         uses: actions/upload-artifact@v7

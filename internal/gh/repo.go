@@ -1,9 +1,11 @@
-package main
+// Package gh contains all GitHub-facing logic for gh-attach: the Git
+// Data API client used to push uploads, the Issues API client used to
+// upsert PR/issue comments, and the context resolvers that determine
+// which repo and PR/issue the current invocation targets.
+package gh
 
 import (
-	"encoding/json"
 	"fmt"
-	"os/exec"
 	"regexp"
 	"strings"
 )
@@ -44,34 +46,9 @@ func parseOwnerRepo(path string) (*Repo, error) {
 	return &Repo{Owner: parts[0], Name: parts[1]}, nil
 }
 
-// resolveRepo returns the target GitHub repo. If override is non-empty, it
-// is parsed as either "owner/name" or a full SSH/HTTPS GitHub URL and used
-// directly. Otherwise, the repo is detected from the current git clone's
-// origin remote.
-func resolveRepo(override string) (*Repo, error) {
-	if override != "" {
-		// Accept full SSH/HTTPS URLs as a convenience — users often have a
-		// URL from a browser address bar or `git clone` command handy. Use
-		// prefix checks (not `Contains(..., "github.com")`) so valid plain
-		// slugs like `foo/github.com-bar` aren't mis-routed as URLs.
-		if strings.HasPrefix(override, "git@") ||
-			strings.HasPrefix(override, "http://") ||
-			strings.HasPrefix(override, "https://") ||
-			strings.HasPrefix(override, "github.com/") {
-			return parseRepoFromRemote(override)
-		}
-		return parseOwnerRepo(override)
-	}
-	out, err := exec.Command("git", "remote", "get-url", "origin").Output()
-	if err != nil {
-		return nil, fmt.Errorf("git remote get-url origin: %w", err)
-	}
-	return parseRepoFromRemote(strings.TrimSpace(string(out)))
-}
-
 // keyCharset is the set of characters allowed anywhere in an ad-hoc --key
 // value. Segment-level rules (leading character, .lock suffix, etc.) are
-// enforced separately in validateKey because git's ref name rules apply to
+// enforced separately in ValidateKey because git's ref name rules apply to
 // each `/`-separated component, not just the whole string.
 var keyCharset = regexp.MustCompile(`^[a-zA-Z0-9._/-]+$`)
 
@@ -80,12 +57,12 @@ var keyCharset = regexp.MustCompile(`^[a-zA-Z0-9._/-]+$`)
 // under refs/uploads/issues/<N>.
 var keyPureNumeric = regexp.MustCompile(`^[0-9]+$`)
 
-// validateKey returns an error if key is not a legal --key value. It
+// ValidateKey returns an error if key is not a legal --key value. It
 // enforces a strict safe subset of git's ref name rules so that every
 // accepted key can be used as-is in refs/uploads/misc/<key>. Git's rules
 // apply per path component (each `/`-separated segment), so segment-level
 // checks run after the whole-string checks.
-func validateKey(key string) error {
+func ValidateKey(key string) error {
 	if key == "" {
 		return fmt.Errorf("--key cannot be empty")
 	}
@@ -128,22 +105,4 @@ func validateKey(key string) error {
 		}
 	}
 	return nil
-}
-
-// resolvePR auto-detects the PR number for the current branch using gh.
-func resolvePR(repo *Repo) (int, error) {
-	out, err := exec.Command("gh", "pr", "view", "--json", "number", "--repo", repo.Owner+"/"+repo.Name).Output()
-	if err != nil {
-		return 0, fmt.Errorf("no PR found for current branch (pass an explicit PR or issue number): %w", err)
-	}
-	var result struct {
-		Number int `json:"number"`
-	}
-	if err := json.Unmarshal(out, &result); err != nil {
-		return 0, fmt.Errorf("parse PR response: %w", err)
-	}
-	if result.Number == 0 {
-		return 0, fmt.Errorf("no PR found for current branch")
-	}
-	return result.Number, nil
 }

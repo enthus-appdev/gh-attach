@@ -1,4 +1,4 @@
-package main
+package gh
 
 import (
 	"strings"
@@ -34,6 +34,11 @@ func TestParseRepoFromRemote(t *testing.T) {
 		{
 			name:    "invalid URL",
 			remote:  "not-a-url",
+			wantErr: true,
+		},
+		{
+			name:    "SSH URL without colon",
+			remote:  "git@nocolonhere",
 			wantErr: true,
 		},
 	}
@@ -118,7 +123,7 @@ func TestValidateKey(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := validateKey(tt.key)
+			err := ValidateKey(tt.key)
 			if tt.wantErr {
 				if err == nil {
 					t.Fatalf("expected error for %q, got nil", tt.key)

@@ -112,7 +112,7 @@ jobs:
       - name: Download main.breakdown baseline
         id: download-main-breakdown
         if: github.event_name == 'pull_request'
-        uses: dawidd6/action-download-artifact@v20
+        uses: dawidd6/action-download-artifact@v21
         with:
           branch: main
           workflow_conclusion: success

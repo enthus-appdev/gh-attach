@@ -130,6 +130,51 @@ func TestRun_GifMode_RejectsOutOfRangeDelay(t *testing.T) {
 	}
 }
 
+// TestRun_GifMode_RejectsOversizedDelay locks in the upper bound: GIF
+// stores each frame's delay as a 16-bit centisecond count, so a
+// --delay whose rounded/10 value would exceed that must be rejected
+// rather than silently wrapping into a fast, wrong playback speed.
+func TestRun_GifMode_RejectsOversizedDelay(t *testing.T) {
+	dir := t.TempDir()
+	f0 := writePNG(t, dir, "frame-000.png", 8, 6, color.RGBA{200, 0, 0, 255})
+	deps, cap := gifModeDeps()
+
+	var stdout, stderr bytes.Buffer
+	code := runWithDeps([]string{"--gif", "--delay", "700000", "42", f0}, &stdout, &stderr, deps)
+	if code == 0 {
+		t.Fatalf("expected non-zero exit for --delay above 655350ms, got 0")
+	}
+	if !strings.Contains(stderr.String(), "--delay") {
+		t.Errorf("stderr should explain the --delay range violation, got: %s", stderr.String())
+	}
+	if cap.gotFiles != nil {
+		t.Errorf("PushAttachments should not have been called, got: %v", cap.gotFiles)
+	}
+}
+
+// TestRun_GifMode_RejectsNameWithoutGifExtension locks in that a --gif
+// --name is required to end in .gif: FormatSection (comment.go) picks
+// inline-vs-link rendering purely from the uploaded basename's
+// extension, so a mismatched name would silently defeat --gif's whole
+// point (autoplay inline instead of a plain download link).
+func TestRun_GifMode_RejectsNameWithoutGifExtension(t *testing.T) {
+	dir := t.TempDir()
+	f0 := writePNG(t, dir, "frame-000.png", 8, 6, color.RGBA{200, 0, 0, 255})
+	deps, cap := gifModeDeps()
+
+	var stdout, stderr bytes.Buffer
+	code := runWithDeps([]string{"--gif", "--name", "verify.png", "42", f0}, &stdout, &stderr, deps)
+	if code == 0 {
+		t.Fatalf("expected non-zero exit for --name without a .gif extension, got 0")
+	}
+	if !strings.Contains(stderr.String(), "--name") {
+		t.Errorf("stderr should explain the --name extension violation, got: %s", stderr.String())
+	}
+	if cap.gotFiles != nil {
+		t.Errorf("PushAttachments should not have been called, got: %v", cap.gotFiles)
+	}
+}
+
 // TestRun_GifMode_ValidatesName locks in the reviewer-flagged behavior:
 // --name in gif mode is routed through validateName, not just the
 // filepath.Base defense-in-depth inside assembleGIF. A name containing

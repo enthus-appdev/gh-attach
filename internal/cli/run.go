@@ -170,7 +170,7 @@ func runWithDeps(args []string, stdout, stderr io.Writer, deps runDeps) int {
 	asJSON := fs.Bool("json", false, "Emit a JSON result object instead of the markdown table (suppresses stderr progress + URL list)")
 	name := fs.String("name", "", "Basename to use when reading file bytes from stdin (`-`) or naming a --gif output. Required with stdin, rejected otherwise (except with --gif).")
 	gifMode := fs.Bool("gif", false, "Assemble the input image frames into one animated GIF and upload that instead of the individual frames")
-	delayMS := fs.Int("delay", 80, "Per-frame delay in milliseconds for --gif (GIF granularity is 10ms; minimum 20)")
+	delayMS := fs.Int("delay", 80, "Per-frame delay in milliseconds for --gif (GIF granularity is 10ms; range 20-655350)")
 	colors := fs.Int("colors", 256, "Palette colors per frame for --gif (2–256)")
 
 	fs.Usage = func() {
@@ -287,6 +287,12 @@ func runUpload(opts uploadOptions, stdout, stderr io.Writer, deps runDeps) error
 		if opts.delayMS < 20 {
 			return fmt.Errorf("--delay must be at least 20 ms (got %d)", opts.delayMS)
 		}
+		// GIF stores each frame's delay as a 16-bit count of
+		// centiseconds; gifenc rounds delayMS/10 into that field, so
+		// anything past 655350ms would wrap instead of playing slower.
+		if opts.delayMS > 655350 {
+			return fmt.Errorf("--delay must be at most 655350 ms (got %d)", opts.delayMS)
+		}
 	}
 	if !useStdin {
 		for _, p := range opts.filePaths {
@@ -302,6 +308,13 @@ func runUpload(opts uploadOptions, stdout, stderr io.Writer, deps runDeps) error
 		if opts.gif && opts.name != "" {
 			if err := validateName(opts.name); err != nil {
 				return err
+			}
+			// FormatSection (comment.go) decides inline-vs-link
+			// rendering purely from the uploaded basename's
+			// extension, so a --name that doesn't end in .gif would
+			// silently defeat the point of --gif (autoplay inline).
+			if !strings.HasSuffix(strings.ToLower(opts.name), ".gif") {
+				return fmt.Errorf("--name must end in .gif when used with --gif (got %q)", opts.name)
 			}
 		}
 	} else {

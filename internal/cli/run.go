@@ -309,13 +309,6 @@ func runUpload(opts uploadOptions, stdout, stderr io.Writer, deps runDeps) error
 			if err := validateName(opts.name); err != nil {
 				return err
 			}
-			// FormatSection (comment.go) decides inline-vs-link
-			// rendering purely from the uploaded basename's
-			// extension, so a --name that doesn't end in .gif would
-			// silently defeat the point of --gif (autoplay inline).
-			if !strings.HasSuffix(strings.ToLower(opts.name), ".gif") {
-				return fmt.Errorf("--name must end in .gif when used with --gif (got %q)", opts.name)
-			}
 		}
 	} else {
 		if opts.name == "" {

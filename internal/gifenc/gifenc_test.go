@@ -103,3 +103,16 @@ func TestEncode_ZeroSizedFirstFrame(t *testing.T) {
 		t.Fatal("expected error for zero-sized first frame, got nil")
 	}
 }
+
+func TestEncode_DelayUpperClamp(t *testing.T) {
+	// DelayMS/10 rounds to well above the uint16 max (65535 cs); must clamp,
+	// not wrap. 1_000_000ms → 100000cs unclamped → would wrap.
+	data, err := Encode([]image.Image{solid(2, 2, color.White)}, Options{DelayMS: 1_000_000, NumColors: 16})
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	g, _ := gif.DecodeAll(bytes.NewReader(data))
+	if g.Delay[0] != 65535 {
+		t.Errorf("Delay = %d, want 65535 (clamped, not wrapped)", g.Delay[0])
+	}
+}

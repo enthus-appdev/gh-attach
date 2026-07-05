@@ -41,6 +41,11 @@ func Encode(frames []image.Image, opts Options) ([]byte, error) {
 	if delay < 2 {
 		delay = 2
 	}
+	// GIF stores delay as a uint16; clamp so a large --delay (or the
+	// doubled delay on the size-ceiling re-encode path) cannot wrap.
+	if delay > 65535 {
+		delay = 65535
+	}
 
 	b0 := frames[0].Bounds()
 	w, h := b0.Dx(), b0.Dy()

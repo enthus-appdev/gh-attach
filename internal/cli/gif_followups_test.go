@@ -116,21 +116,28 @@ func TestAssembleGIF_NameGifExtUnchanged(t *testing.T) {
 	}
 }
 
-func TestAssembleGIF_NameNonGifExtNormalized(t *testing.T) {
+func TestAssembleGIF_NameNonGifGetsGifAppended(t *testing.T) {
 	dir := t.TempDir()
 	f0 := writePNG(t, dir, "a.png", 4, 4, color.White)
-	// The payload is a GIF, so a non-.gif image extension is normalized to
-	// .gif (not left as-is) — GitHub keys the content-type off the extension.
-	gifPath, cleanup, warning, err := assembleGIF([]string{f0}, gifAssembleOptions{name: "chart.png", delayMS: 80})
-	if err != nil {
-		t.Fatalf("assembleGIF: %v", err)
+	// .gif is appended, not substituted for the last dot-segment, so a dotted
+	// base name keeps every segment ("release-1.0" is not mangled to
+	// "release-1.gif"). The payload is a GIF, so the result must end in .gif.
+	cases := map[string]string{
+		"chart.png":   "chart.png.gif",
+		"release-1.0": "release-1.0.gif",
 	}
-	defer cleanup()
-	if got := filepath.Base(gifPath); got != "chart.gif" {
-		t.Errorf("output basename = %q, want chart.gif (normalized)", got)
-	}
-	if !strings.Contains(warning, "not a .gif") {
-		t.Errorf("warning should note the forced .gif extension, got: %q", warning)
+	for name, want := range cases {
+		gifPath, cleanup, warning, err := assembleGIF([]string{f0}, gifAssembleOptions{name: name, delayMS: 80})
+		if err != nil {
+			t.Fatalf("assembleGIF(%q): %v", name, err)
+		}
+		if got := filepath.Base(gifPath); got != want {
+			t.Errorf("name %q -> %q, want %q", name, got, want)
+		}
+		if !strings.Contains(warning, "not a .gif") {
+			t.Errorf("name %q: warning should note the forced .gif extension, got: %q", name, warning)
+		}
+		cleanup()
 	}
 }
 

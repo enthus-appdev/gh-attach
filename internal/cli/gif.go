@@ -113,12 +113,14 @@ func assembleGIF(framePaths []string, opts gifAssembleOptions) (string, func(), 
 		}
 	}
 	// The payload is always a GIF, and GitHub derives an attachment's
-	// content-type from its name extension: any non-.gif extension (even
-	// another image type like .png) can render as a static still instead of
-	// the inline autoplay --gif exists to produce. Force a .gif extension —
-	// case-insensitive so an existing .GIF isn't doubled — and warn on change.
+	// content-type from its name extension: any non-.gif name (even another
+	// image type like .png) can render as a static still instead of the
+	// inline autoplay --gif exists to produce. Append .gif (rather than
+	// replacing the last dot-segment) so a dotted base name like
+	// "release-1.0" keeps its ".0" instead of being mangled to "release-1.gif".
+	// Case-insensitive so an existing .GIF isn't doubled.
 	if !strings.EqualFold(filepath.Ext(name), ".gif") {
-		fixed := strings.TrimSuffix(name, filepath.Ext(name)) + ".gif"
+		fixed := name + ".gif"
 		warnings = append(warnings, fmt.Sprintf("--name %q is not a .gif; using %q so the clip animates inline", name, fixed))
 		name = fixed
 	}

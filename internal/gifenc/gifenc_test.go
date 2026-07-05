@@ -76,3 +76,30 @@ func TestEncode_DelayClamp(t *testing.T) {
 		t.Errorf("clamped Delay = %d, want 2", g.Delay[0])
 	}
 }
+
+func TestEncode_DelayRoundsNotTruncates(t *testing.T) {
+	// 25ms → round-half-up to 3 centiseconds; truncation (/10) would give 2.
+	// This test guards the spec-mandated "round, not truncate" behavior.
+	data, err := Encode([]image.Image{solid(2, 2, color.White)}, Options{DelayMS: 25, NumColors: 16})
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	g, err := gif.DecodeAll(bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("DecodeAll: %v", err)
+	}
+	if len(g.Delay) == 0 {
+		t.Fatal("expected at least one delay frame")
+	}
+	if g.Delay[0] != 3 {
+		t.Errorf("Delay = %d, want 3 (rounded, not truncated)", g.Delay[0])
+	}
+}
+
+func TestEncode_ZeroSizedFirstFrame(t *testing.T) {
+	empty := image.NewRGBA(image.Rect(0, 0, 0, 0))
+	_, err := Encode([]image.Image{empty}, Options{DelayMS: 80, NumColors: 16})
+	if err == nil {
+		t.Fatal("expected error for zero-sized first frame, got nil")
+	}
+}

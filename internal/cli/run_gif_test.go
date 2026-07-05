@@ -3,6 +3,8 @@ package cli
 import (
 	"bytes"
 	"image/color"
+	"image/gif"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -83,21 +85,21 @@ func TestRun_GifMode_RejectsStdin(t *testing.T) {
 // rejection tests below: a resolvable repo/PR and a capturing git
 // client that would reveal whether PushAttachments was ever reached.
 func gifModeDeps() (runDeps, *capturingGitClient) {
-	cap := &capturingGitClient{}
+	captured := &capturingGitClient{}
 	return runDeps{
 		resolveRepo:  func(string) (*gh.Repo, error) { return &gh.Repo{Owner: "o", Name: "r"}, nil },
 		resolvePR:    func(*gh.Repo) (int, error) { return 42, nil },
-		newGitClient: func() (gitDataClient, error) { return cap, nil },
+		newGitClient: func() (gitDataClient, error) { return captured, nil },
 		newCmtClient: func() (commentClient, error) { return nil, nil },
 		expandFiles:  expandFiles,
 		stdin:        strings.NewReader(""),
-	}, cap
+	}, captured
 }
 
 func TestRun_GifMode_RejectsOutOfRangeColors(t *testing.T) {
 	dir := t.TempDir()
 	f0 := writePNG(t, dir, "frame-000.png", 8, 6, color.RGBA{200, 0, 0, 255})
-	deps, cap := gifModeDeps()
+	deps, captured := gifModeDeps()
 
 	var stdout, stderr bytes.Buffer
 	code := runWithDeps([]string{"--gif", "--colors", "1", "42", f0}, &stdout, &stderr, deps)
@@ -107,15 +109,15 @@ func TestRun_GifMode_RejectsOutOfRangeColors(t *testing.T) {
 	if !strings.Contains(stderr.String(), "--colors") {
 		t.Errorf("stderr should explain the --colors range violation, got: %s", stderr.String())
 	}
-	if cap.gotFiles != nil {
-		t.Errorf("PushAttachments should not have been called, got: %v", cap.gotFiles)
+	if captured.gotFiles != nil {
+		t.Errorf("PushAttachments should not have been called, got: %v", captured.gotFiles)
 	}
 }
 
 func TestRun_GifMode_RejectsOutOfRangeDelay(t *testing.T) {
 	dir := t.TempDir()
 	f0 := writePNG(t, dir, "frame-000.png", 8, 6, color.RGBA{200, 0, 0, 255})
-	deps, cap := gifModeDeps()
+	deps, captured := gifModeDeps()
 
 	var stdout, stderr bytes.Buffer
 	code := runWithDeps([]string{"--gif", "--delay", "5", "42", f0}, &stdout, &stderr, deps)
@@ -125,27 +127,67 @@ func TestRun_GifMode_RejectsOutOfRangeDelay(t *testing.T) {
 	if !strings.Contains(stderr.String(), "--delay") {
 		t.Errorf("stderr should explain the --delay range violation, got: %s", stderr.String())
 	}
-	if cap.gotFiles != nil {
-		t.Errorf("PushAttachments should not have been called, got: %v", cap.gotFiles)
+	if captured.gotFiles != nil {
+		t.Errorf("PushAttachments should not have been called, got: %v", captured.gotFiles)
 	}
+}
+
+// gifBytesCapturingGitClient additionally reads the pushed file's
+// bytes at push time. assembleGIF's temp file is removed by its
+// deferred cleanup before runWithDeps returns to the test, so bytes
+// must be captured synchronously inside PushAttachments rather than
+// read back afterward.
+type gifBytesCapturingGitClient struct {
+	capturingGitClient
+	gotBytes []byte
+}
+
+func (c *gifBytesCapturingGitClient) PushAttachments(repo *gh.Repo, refPath, commitMessage string, files []string) ([]gh.AttachmentPath, string, error) {
+	if len(files) == 1 {
+		b, err := os.ReadFile(files[0])
+		if err != nil {
+			return nil, "", err
+		}
+		c.gotBytes = b
+	}
+	return c.capturingGitClient.PushAttachments(repo, refPath, commitMessage, files)
 }
 
 // TestRun_GifMode_AcceptsMaxDelay locks in the boundary itself (655350
 // is the largest --delay whose rounded centisecond value still fits
 // the GIF format's 16-bit delay field) so the rejection above is
-// proven to be an off-by-one-safe `>`, not an overly strict `>=`.
+// proven to be an off-by-one-safe `>`, not an overly strict `>=`. It
+// also decodes the produced GIF to confirm the CLI's delayMS actually
+// reaches the encoded frame delay (in centiseconds) unchanged, rather
+// than just checking that the CLI accepted the flag.
 func TestRun_GifMode_AcceptsMaxDelay(t *testing.T) {
 	dir := t.TempDir()
 	f0 := writePNG(t, dir, "frame-000.png", 8, 6, color.RGBA{200, 0, 0, 255})
-	deps, cap := gifModeDeps()
+	client := &gifBytesCapturingGitClient{}
+	deps := runDeps{
+		resolveRepo:  func(string) (*gh.Repo, error) { return &gh.Repo{Owner: "o", Name: "r"}, nil },
+		resolvePR:    func(*gh.Repo) (int, error) { return 42, nil },
+		newGitClient: func() (gitDataClient, error) { return client, nil },
+		newCmtClient: func() (commentClient, error) { return nil, nil },
+		expandFiles:  expandFiles,
+		stdin:        strings.NewReader(""),
+	}
 
 	var stdout, stderr bytes.Buffer
 	code := runWithDeps([]string{"--gif", "--delay", "655350", "42", f0}, &stdout, &stderr, deps)
 	if code != 0 {
 		t.Fatalf("exit code = %d, stderr=%s", code, stderr.String())
 	}
-	if len(cap.gotFiles) != 1 || !strings.HasSuffix(cap.gotFiles[0], ".gif") {
-		t.Errorf("PushAttachments got %v, want exactly one .gif", cap.gotFiles)
+	if len(client.gotFiles) != 1 || !strings.HasSuffix(client.gotFiles[0], ".gif") {
+		t.Fatalf("PushAttachments got %v, want exactly one .gif", client.gotFiles)
+	}
+
+	g, err := gif.DecodeAll(bytes.NewReader(client.gotBytes))
+	if err != nil {
+		t.Fatalf("decode produced gif: %v", err)
+	}
+	if len(g.Delay) == 0 || g.Delay[0] != 65535 {
+		t.Errorf("gif delay = %v, want [65535]", g.Delay)
 	}
 }
 
@@ -156,7 +198,7 @@ func TestRun_GifMode_AcceptsMaxDelay(t *testing.T) {
 func TestRun_GifMode_RejectsOversizedDelay(t *testing.T) {
 	dir := t.TempDir()
 	f0 := writePNG(t, dir, "frame-000.png", 8, 6, color.RGBA{200, 0, 0, 255})
-	deps, cap := gifModeDeps()
+	deps, captured := gifModeDeps()
 
 	var stdout, stderr bytes.Buffer
 	code := runWithDeps([]string{"--gif", "--delay", "700000", "42", f0}, &stdout, &stderr, deps)
@@ -166,8 +208,8 @@ func TestRun_GifMode_RejectsOversizedDelay(t *testing.T) {
 	if !strings.Contains(stderr.String(), "--delay") {
 		t.Errorf("stderr should explain the --delay range violation, got: %s", stderr.String())
 	}
-	if cap.gotFiles != nil {
-		t.Errorf("PushAttachments should not have been called, got: %v", cap.gotFiles)
+	if captured.gotFiles != nil {
+		t.Errorf("PushAttachments should not have been called, got: %v", captured.gotFiles)
 	}
 }
 
@@ -179,7 +221,7 @@ func TestRun_GifMode_RejectsOversizedDelay(t *testing.T) {
 func TestRun_GifMode_RejectsNameWithoutGifExtension(t *testing.T) {
 	dir := t.TempDir()
 	f0 := writePNG(t, dir, "frame-000.png", 8, 6, color.RGBA{200, 0, 0, 255})
-	deps, cap := gifModeDeps()
+	deps, captured := gifModeDeps()
 
 	var stdout, stderr bytes.Buffer
 	code := runWithDeps([]string{"--gif", "--name", "verify.png", "42", f0}, &stdout, &stderr, deps)
@@ -189,8 +231,8 @@ func TestRun_GifMode_RejectsNameWithoutGifExtension(t *testing.T) {
 	if !strings.Contains(stderr.String(), "--name") {
 		t.Errorf("stderr should explain the --name extension violation, got: %s", stderr.String())
 	}
-	if cap.gotFiles != nil {
-		t.Errorf("PushAttachments should not have been called, got: %v", cap.gotFiles)
+	if captured.gotFiles != nil {
+		t.Errorf("PushAttachments should not have been called, got: %v", captured.gotFiles)
 	}
 }
 
@@ -201,7 +243,7 @@ func TestRun_GifMode_RejectsNameWithoutGifExtension(t *testing.T) {
 func TestRun_GifMode_ValidatesName(t *testing.T) {
 	dir := t.TempDir()
 	f0 := writePNG(t, dir, "frame-000.png", 8, 6, color.RGBA{200, 0, 0, 255})
-	deps, cap := gifModeDeps()
+	deps, captured := gifModeDeps()
 
 	var stdout, stderr bytes.Buffer
 	code := runWithDeps([]string{"--gif", "--name", "../evil.gif", "42", f0}, &stdout, &stderr, deps)
@@ -211,7 +253,7 @@ func TestRun_GifMode_ValidatesName(t *testing.T) {
 	if !strings.Contains(stderr.String(), "--name") {
 		t.Errorf("stderr should explain the --name violation, got: %s", stderr.String())
 	}
-	if cap.gotFiles != nil {
-		t.Errorf("PushAttachments should not have been called, got: %v", cap.gotFiles)
+	if captured.gotFiles != nil {
+		t.Errorf("PushAttachments should not have been called, got: %v", captured.gotFiles)
 	}
 }

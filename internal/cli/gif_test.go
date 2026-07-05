@@ -94,15 +94,17 @@ func TestAssembleGIF_BadFrame(t *testing.T) {
 	}
 }
 
-// TestAssembleGIF_NameTraversal pins that a bare "." or ".." in
-// opts.name can't escape the temp dir. filepath.Base has no separator
-// to strip from either string, so it returns them unchanged — Join
-// would otherwise resolve to tmpDir itself or its parent.
+// TestAssembleGIF_NameTraversal pins that a bare "..", ".", or "/" in
+// opts.name can't escape or collapse into the temp dir. filepath.Base
+// has no separator to strip from any of these, so it returns them
+// unchanged — Join would otherwise resolve outside tmpDir (for "..")
+// or onto tmpDir itself (for "." and "/"), the latter failing the
+// write with an is-a-directory error instead of falling back.
 func TestAssembleGIF_NameTraversal(t *testing.T) {
 	dir := t.TempDir()
 	f0 := writePNG(t, dir, "a.png", 4, 4, color.White)
 
-	for _, name := range []string{"..", "."} {
+	for _, name := range []string{"..", ".", "/"} {
 		t.Run(name, func(t *testing.T) {
 			gifPath, cleanup, err := assembleGIF([]string{f0}, gifAssembleOptions{name: name, delayMS: 80})
 			if err != nil {

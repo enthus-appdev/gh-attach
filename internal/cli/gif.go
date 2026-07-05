@@ -48,13 +48,16 @@ func assembleGIF(framePaths []string, opts gifAssembleOptions) (string, func(), 
 
 	// filepath.Base defends assembleGIF as a standalone function: the CLI
 	// validates --name upstream, but a path in opts.name must never let
-	// the write escape the temp dir. Base alone isn't enough — a bare
-	// "." or ".." has no separator for Base to strip, so it passes
-	// through unchanged and Join would resolve outside tmpDir. Reject
-	// those explicitly and fall back to the default name.
+	// the write escape the temp dir. Base alone isn't enough for three
+	// degenerate inputs it returns unchanged (nothing to strip): ".."
+	// (Join would resolve outside tmpDir), "." (Join collapses to
+	// tmpDir itself), and a bare separator "/" (same collapse — Base
+	// of an all-separator path is a single separator). Reject all
+	// three and fall back to the default name.
 	name := "clip.gif"
 	if opts.name != "" {
-		if base := filepath.Base(opts.name); base != "." && base != ".." {
+		base := filepath.Base(opts.name)
+		if base != "." && base != ".." && base != "/" && base != string(filepath.Separator) {
 			name = base
 		}
 	}

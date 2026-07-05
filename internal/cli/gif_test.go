@@ -93,3 +93,35 @@ func TestAssembleGIF_BadFrame(t *testing.T) {
 		t.Fatal("expected decode error for non-image file, got nil")
 	}
 }
+
+// TestAssembleGIF_NameTraversal pins that a bare "." or ".." in
+// opts.name can't escape the temp dir. filepath.Base has no separator
+// to strip from either string, so it returns them unchanged — Join
+// would otherwise resolve to tmpDir itself or its parent.
+func TestAssembleGIF_NameTraversal(t *testing.T) {
+	dir := t.TempDir()
+	f0 := writePNG(t, dir, "a.png", 4, 4, color.White)
+
+	for _, name := range []string{"..", "."} {
+		t.Run(name, func(t *testing.T) {
+			gifPath, cleanup, err := assembleGIF([]string{f0}, gifAssembleOptions{name: name, delayMS: 80})
+			if err != nil {
+				t.Fatalf("assembleGIF: %v", err)
+			}
+			defer cleanup()
+
+			if filepath.Base(gifPath) != "clip.gif" {
+				t.Errorf("gif basename = %q, want clip.gif (fallback for %q)", filepath.Base(gifPath), name)
+			}
+			// The written file must sit inside its own temp dir, not
+			// tmpDir's parent or tmpDir itself as a file.
+			info, err := os.Stat(gifPath)
+			if err != nil {
+				t.Fatalf("stat gif: %v", err)
+			}
+			if info.IsDir() {
+				t.Fatalf("gifPath %q is a directory, want a file", gifPath)
+			}
+		})
+	}
+}

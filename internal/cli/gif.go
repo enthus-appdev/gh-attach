@@ -48,10 +48,15 @@ func assembleGIF(framePaths []string, opts gifAssembleOptions) (string, func(), 
 
 	// filepath.Base defends assembleGIF as a standalone function: the CLI
 	// validates --name upstream, but a path in opts.name must never let
-	// the write escape the temp dir.
+	// the write escape the temp dir. Base alone isn't enough — a bare
+	// "." or ".." has no separator for Base to strip, so it passes
+	// through unchanged and Join would resolve outside tmpDir. Reject
+	// those explicitly and fall back to the default name.
 	name := "clip.gif"
 	if opts.name != "" {
-		name = filepath.Base(opts.name)
+		if base := filepath.Base(opts.name); base != "." && base != ".." {
+			name = base
+		}
 	}
 	tmpDir, err := os.MkdirTemp("", "gh-attach-gif-*")
 	if err != nil {

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/enthus-appdev/gh-attach/internal/gh"
 	"github.com/enthus-appdev/gh-attach/internal/gifenc"
 )
 
@@ -73,15 +74,19 @@ func assembleGIF(framePaths []string, opts gifAssembleOptions) (string, func(), 
 			reducedColors = opts.numColors
 		}
 		reduced := sampleEvenly(frames, (len(frames)+1)/2)
-		data2, err2 := gifenc.Encode(reduced, gifenc.Options{DelayMS: opts.delayMS * 2, NumColors: reducedColors})
+		data2, err2 := reencodeGIF(reduced, gifenc.Options{DelayMS: opts.delayMS * 2, NumColors: reducedColors})
 		if err2 != nil {
-			return "", nil, "", err2
-		}
-		data = data2
-		if int64(len(data)) > opts.sizeCeiling {
-			warnings = append(warnings, fmt.Sprintf("gif is %d bytes, over the %d-byte ceiling even after reduction — uploaded anyway", len(data), opts.sizeCeiling))
+			// The first encode already produced a valid (if oversized) GIF;
+			// prefer shipping it over failing outright when only the
+			// reduction step errors. Keep `data` as-is and warn.
+			warnings = append(warnings, fmt.Sprintf("gif is %d bytes, over the %d-byte ceiling, and the reduction re-encode failed (%v) — uploaded the original anyway", len(data), opts.sizeCeiling, err2))
 		} else {
-			warnings = append(warnings, fmt.Sprintf("gif exceeded the %d-byte ceiling — reduced to %d colors / %d frames", opts.sizeCeiling, reducedColors, len(reduced)))
+			data = data2
+			if int64(len(data)) > opts.sizeCeiling {
+				warnings = append(warnings, fmt.Sprintf("gif is %d bytes, over the %d-byte ceiling even after reduction — uploaded anyway", len(data), opts.sizeCeiling))
+			} else {
+				warnings = append(warnings, fmt.Sprintf("gif exceeded the %d-byte ceiling — reduced to %d colors / %d frames", opts.sizeCeiling, reducedColors, len(reduced)))
+			}
 		}
 	}
 
@@ -100,6 +105,14 @@ func assembleGIF(framePaths []string, opts gifAssembleOptions) (string, func(), 
 			name = base
 		}
 	}
+	// The payload is a GIF; a name without an inline-image extension would
+	// render as a click-through link instead of an inline autoplay, defeating
+	// --gif. Append .gif so the embed renders inline, and warn since this
+	// changes the caller's name. (The default "clip.gif" already passes.)
+	if !gh.IsImage(name) {
+		warnings = append(warnings, fmt.Sprintf("--name %q has no inline-image extension; appended .gif so the clip renders inline", name))
+		name += ".gif"
+	}
 	tmpDir, err := os.MkdirTemp("", "gh-attach-gif-*")
 	if err != nil {
 		return "", nil, "", fmt.Errorf("create temp dir: %w", err)
@@ -113,6 +126,12 @@ func assembleGIF(framePaths []string, opts gifAssembleOptions) (string, func(), 
 	}
 	return gifPath, cleanup, strings.Join(warnings, "; "), nil
 }
+
+// reencodeGIF is the size-ceiling reduction encoder. It is a package
+// var so a test can force the reduction step to fail and exercise the
+// fallback that keeps the valid oversized first encode; production is
+// always gifenc.Encode.
+var reencodeGIF = gifenc.Encode
 
 // sampleEvenly returns n items drawn at even intervals across in,
 // always including the first and (when n>1) the last. If n>=len(in)

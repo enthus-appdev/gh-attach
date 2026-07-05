@@ -32,6 +32,12 @@ type uploadResult struct {
 	Files      []uploadFile `json:"files"`
 	Markdown   string       `json:"markdown"`
 	CommentURL string       `json:"comment_url,omitempty"`
+	// Warning carries any --gif guard message (frame-cap, size-ceiling,
+	// name-extension). In non-JSON mode these go to stderr; in JSON mode
+	// stderr is suppressed, so this field is the only channel a consumer
+	// has to learn the GIF was capped, oversized, or renamed. omitempty:
+	// absent when no guard fired.
+	Warning string `json:"warning,omitempty"`
 }
 
 // uploadFile is one entry in uploadResult.Files. Name is the raw
@@ -378,6 +384,7 @@ func runUpload(opts uploadOptions, stdout, stderr io.Writer, deps runDeps) error
 	// --gif: collapse the frame files into a single animated GIF and
 	// upload that. Downstream (push, render, comment) is unchanged —
 	// a .gif is already an inline-image extension in comment.go.
+	var gifWarning string
 	if opts.gif {
 		gifPath, cleanup, warning, gerr := assembleGIF(files, gifAssembleOptions{
 			name:        opts.name,
@@ -390,6 +397,7 @@ func runUpload(opts uploadOptions, stdout, stderr io.Writer, deps runDeps) error
 			return fmt.Errorf("assemble gif: %w", gerr)
 		}
 		defer cleanup()
+		gifWarning = warning
 		if warning != "" && !opts.asJSON {
 			_, _ = fmt.Fprintf(stderr, "warning: %s\n", warning)
 		}
@@ -453,6 +461,7 @@ func runUpload(opts uploadOptions, stdout, stderr io.Writer, deps runDeps) error
 			CommitSHA:  commitSHA,
 			Markdown:   markdown,
 			CommentURL: commentURL, // omitempty hides it when unset
+			Warning:    gifWarning, // omitempty hides it when no guard fired
 			Files:      make([]uploadFile, 0, len(paths)),
 		}
 		if opts.key != "" {

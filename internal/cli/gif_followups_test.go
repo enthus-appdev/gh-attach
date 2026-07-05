@@ -96,6 +96,49 @@ func TestAssembleGIF_NameWithoutImageExt(t *testing.T) {
 	}
 }
 
+func TestAssembleGIF_NoNameDefaultsToClipGif(t *testing.T) {
+	dir := t.TempDir()
+	f0 := writePNG(t, dir, "frame-000.png", 8, 6, color.White)
+	f1 := writePNG(t, dir, "frame-001.png", 8, 6, color.Black)
+	// With no name the default is "clip.gif" — not derived from a frame's
+	// basename — so the .gif normalization is a no-op and no warning that
+	// references --name fires on the common no-flag path.
+	gifPath, cleanup, warning, err := assembleGIF([]string{f0, f1}, gifAssembleOptions{delayMS: 80})
+	if err != nil {
+		t.Fatalf("assembleGIF: %v", err)
+	}
+	defer cleanup()
+	if got := filepath.Base(gifPath); got != "clip.gif" {
+		t.Errorf("output basename = %q, want clip.gif", got)
+	}
+	if warning != "" {
+		t.Errorf("no --name given, warning should be empty, got: %q", warning)
+	}
+}
+
+func TestAssembleGIF_SuccessfulReductionWarns(t *testing.T) {
+	dir := t.TempDir()
+	var paths []string
+	for i := 0; i < 4; i++ {
+		paths = append(paths, writePNG(t, dir, fmt.Sprintf("f-%03d.png", i), 64, 64, color.RGBA{uint8(i * 60), 20, 20, 255}))
+	}
+	// First encode exceeds the ceiling; the injected reduction returns a
+	// small valid payload that fits, so the success-reduction warning fires.
+	_, cleanup, warning, err := assembleGIF(paths, gifAssembleOptions{
+		delayMS: 80, numColors: 256, sizeCeiling: 100,
+		reencode: func([]image.Image, gifenc.Options) ([]byte, error) {
+			return make([]byte, 10), nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("assembleGIF: %v", err)
+	}
+	defer cleanup()
+	if !strings.Contains(warning, "reduced to") {
+		t.Errorf("warning should describe the successful reduction, got: %q", warning)
+	}
+}
+
 func TestAssembleGIF_NameGifExtUnchanged(t *testing.T) {
 	dir := t.TempDir()
 	f0 := writePNG(t, dir, "a.png", 4, 4, color.White)

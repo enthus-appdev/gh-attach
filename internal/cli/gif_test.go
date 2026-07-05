@@ -196,3 +196,36 @@ func TestAssembleGIF_SizeCeilingReencode(t *testing.T) {
 		t.Error("expected a warning when the size ceiling triggers a re-encode")
 	}
 }
+
+// TestSampleEvenly pins sampleEvenly's boundary behavior directly:
+// the pass-through cases (n<=0, n>=len(in)), the single-element case,
+// and even sampling that always keeps both ends.
+func TestSampleEvenly(t *testing.T) {
+	tests := []struct {
+		name string
+		in   []int
+		n    int
+		want []int
+	}{
+		{"n zero passes through", []int{1, 2, 3}, 0, []int{1, 2, 3}},
+		{"n negative passes through", []int{1, 2, 3}, -1, []int{1, 2, 3}},
+		{"n equal to len passes through", []int{1, 2, 3}, 3, []int{1, 2, 3}},
+		{"n greater than len passes through", []int{1, 2, 3}, 5, []int{1, 2, 3}},
+		{"n one keeps first", []int{1, 2, 3}, 1, []int{1}},
+		{"sample 3 from 5 keeps both ends", []int{1, 2, 3, 4, 5}, 3, []int{1, 3, 5}},
+		{"sample 3 from 4 keeps both ends", []int{1, 2, 3, 4}, 3, []int{1, 2, 4}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := sampleEvenly(tt.in, tt.n)
+			if len(got) != len(tt.want) {
+				t.Fatalf("sampleEvenly(%v, %d) = %v, want %v", tt.in, tt.n, got, tt.want)
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Errorf("sampleEvenly(%v, %d) = %v, want %v", tt.in, tt.n, got, tt.want)
+				}
+			}
+		})
+	}
+}

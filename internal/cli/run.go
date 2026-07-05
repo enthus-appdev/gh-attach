@@ -103,9 +103,11 @@ type uploadOptions struct {
 	key          string
 	name         string
 	asJSON       bool
-	gif          bool // --gif: assemble filePaths into one animated GIF before upload
-	delayMS      int  // --delay: per-frame delay (ms) in gif mode
-	numColors    int  // --colors: per-frame palette size in gif mode
+	gif          bool  // --gif: assemble filePaths into one animated GIF before upload
+	delayMS      int   // --delay: per-frame delay (ms) in gif mode
+	numColors    int   // --colors: per-frame palette size in gif mode
+	maxFrames    int   // --max-frames: cap on frames assembled in gif mode
+	sizeCeiling  int64 // --size-ceiling: byte ceiling triggering a reduced re-encode in gif mode
 }
 
 // defaultDeps returns the real production dependencies — the thin
@@ -172,6 +174,8 @@ func runWithDeps(args []string, stdout, stderr io.Writer, deps runDeps) int {
 	gifMode := fs.Bool("gif", false, "Assemble the input image frames into one animated GIF and upload that instead of the individual frames")
 	delayMS := fs.Int("delay", 80, "Per-frame delay in milliseconds for --gif (GIF granularity is 10ms; range 20-655350)")
 	colors := fs.Int("colors", 256, "Palette colors per frame for --gif (2–256)")
+	maxFrames := fs.Int("max-frames", 300, "Cap on frames assembled by --gif; excess frames are evenly sampled out (0 = no cap)")
+	sizeCeiling := fs.Int64("size-ceiling", 5*1024*1024, "Byte ceiling for the --gif output; over it, re-encode once with fewer colors/frames (0 = no ceiling)")
 
 	fs.Usage = func() {
 		_, _ = fmt.Fprintf(stderr, "Upload images to a GitHub PR or issue and print embeddable markdown to stdout.\n\n")
@@ -228,6 +232,8 @@ func runWithDeps(args []string, stdout, stderr io.Writer, deps runDeps) int {
 		gif:          *gifMode,
 		delayMS:      *delayMS,
 		numColors:    *colors,
+		maxFrames:    *maxFrames,
+		sizeCeiling:  *sizeCeiling,
 	}
 	if err := runUpload(opts, stdout, stderr, deps); err != nil {
 		_, _ = fmt.Fprintf(stderr, "error: %v\n", err)
@@ -367,15 +373,20 @@ func runUpload(opts uploadOptions, stdout, stderr io.Writer, deps runDeps) error
 	// upload that. Downstream (push, render, comment) is unchanged —
 	// a .gif is already an inline-image extension in comment.go.
 	if opts.gif {
-		gifPath, cleanup, gerr := assembleGIF(files, gifAssembleOptions{
-			name:      opts.name,
-			delayMS:   opts.delayMS,
-			numColors: opts.numColors,
+		gifPath, cleanup, warning, gerr := assembleGIF(files, gifAssembleOptions{
+			name:        opts.name,
+			delayMS:     opts.delayMS,
+			numColors:   opts.numColors,
+			maxFrames:   opts.maxFrames,
+			sizeCeiling: opts.sizeCeiling,
 		})
 		if gerr != nil {
 			return fmt.Errorf("assemble gif: %w", gerr)
 		}
 		defer cleanup()
+		if warning != "" && !opts.asJSON {
+			_, _ = fmt.Fprintf(stderr, "warning: %s\n", warning)
+		}
 		files = []string{gifPath}
 	}
 

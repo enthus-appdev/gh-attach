@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"fmt"
 	"image"
 	"image/color"
 	"image/gif"
@@ -37,7 +38,7 @@ func TestAssembleGIF_TwoFrames(t *testing.T) {
 	f0 := writePNG(t, dir, "frame-000.png", 8, 6, color.RGBA{255, 0, 0, 255})
 	f1 := writePNG(t, dir, "frame-001.png", 8, 6, color.RGBA{0, 0, 255, 255})
 
-	gifPath, cleanup, err := assembleGIF([]string{f0, f1}, gifAssembleOptions{delayMS: 80, numColors: 64})
+	gifPath, cleanup, _, err := assembleGIF([]string{f0, f1}, gifAssembleOptions{delayMS: 80, numColors: 64})
 	if err != nil {
 		t.Fatalf("assembleGIF: %v", err)
 	}
@@ -67,7 +68,7 @@ func TestAssembleGIF_TwoFrames(t *testing.T) {
 func TestAssembleGIF_CustomName(t *testing.T) {
 	dir := t.TempDir()
 	f0 := writePNG(t, dir, "a.png", 4, 4, color.White)
-	gifPath, cleanup, err := assembleGIF([]string{f0}, gifAssembleOptions{name: "verify.gif", delayMS: 80})
+	gifPath, cleanup, _, err := assembleGIF([]string{f0}, gifAssembleOptions{name: "verify.gif", delayMS: 80})
 	if err != nil {
 		t.Fatalf("assembleGIF: %v", err)
 	}
@@ -78,7 +79,7 @@ func TestAssembleGIF_CustomName(t *testing.T) {
 }
 
 func TestAssembleGIF_NoFrames(t *testing.T) {
-	if _, _, err := assembleGIF(nil, gifAssembleOptions{}); err == nil {
+	if _, _, _, err := assembleGIF(nil, gifAssembleOptions{}); err == nil {
 		t.Fatal("expected error for no frames, got nil")
 	}
 }
@@ -89,7 +90,7 @@ func TestAssembleGIF_BadFrame(t *testing.T) {
 	if err := os.WriteFile(bad, []byte("not a png"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := assembleGIF([]string{bad}, gifAssembleOptions{delayMS: 80}); err == nil {
+	if _, _, _, err := assembleGIF([]string{bad}, gifAssembleOptions{delayMS: 80}); err == nil {
 		t.Fatal("expected decode error for non-image file, got nil")
 	}
 }
@@ -106,7 +107,7 @@ func TestAssembleGIF_NameTraversal(t *testing.T) {
 
 	for _, name := range []string{"..", ".", "/"} {
 		t.Run(name, func(t *testing.T) {
-			gifPath, cleanup, err := assembleGIF([]string{f0}, gifAssembleOptions{name: name, delayMS: 80})
+			gifPath, cleanup, _, err := assembleGIF([]string{f0}, gifAssembleOptions{name: name, delayMS: 80})
 			if err != nil {
 				t.Fatalf("assembleGIF: %v", err)
 			}
@@ -125,5 +126,73 @@ func TestAssembleGIF_NameTraversal(t *testing.T) {
 				t.Fatalf("gifPath %q is a directory, want a file", gifPath)
 			}
 		})
+	}
+}
+
+func TestAssembleGIF_FrameCap(t *testing.T) {
+	dir := t.TempDir()
+	var paths []string
+	for i := 0; i < 10; i++ {
+		paths = append(paths, writePNG(t, dir, fmt.Sprintf("f-%03d.png", i), 8, 6, color.White))
+	}
+	gifPath, cleanup, warning, err := assembleGIF(paths, gifAssembleOptions{delayMS: 80, maxFrames: 4})
+	if err != nil {
+		t.Fatalf("assembleGIF: %v", err)
+	}
+	defer cleanup()
+	data, _ := os.ReadFile(gifPath)
+	g, _ := gif.DecodeAll(bytes.NewReader(data))
+	if len(g.Image) > 4 {
+		t.Errorf("frame count = %d, want ≤4 after cap", len(g.Image))
+	}
+	if warning == "" {
+		t.Error("expected a warning when frames are capped")
+	}
+}
+
+func TestAssembleGIF_NoCapNoWarning(t *testing.T) {
+	dir := t.TempDir()
+	f0 := writePNG(t, dir, "a.png", 4, 4, color.White)
+	_, cleanup, warning, err := assembleGIF([]string{f0}, gifAssembleOptions{delayMS: 80, maxFrames: 300})
+	if err != nil {
+		t.Fatalf("assembleGIF: %v", err)
+	}
+	defer cleanup()
+	if warning != "" {
+		t.Errorf("unexpected warning: %q", warning)
+	}
+}
+
+func TestAssembleGIF_SizeCeilingReencode(t *testing.T) {
+	dir := t.TempDir()
+	var paths []string
+	for i := 0; i < 8; i++ {
+		c := color.RGBA{uint8(i * 30), 0, 255, 255}
+		paths = append(paths, writePNG(t, dir, fmt.Sprintf("f-%03d.png", i), 64, 64, c))
+	}
+
+	// Encode once with no ceiling to learn the full size, then set a
+	// ceiling just below it to force exactly one reduced re-encode.
+	full, cleanupFull, _, err := assembleGIF(paths, gifAssembleOptions{delayMS: 80, numColors: 256})
+	if err != nil {
+		t.Fatalf("assembleGIF(full): %v", err)
+	}
+	fullData, _ := os.ReadFile(full)
+	cleanupFull()
+
+	reduced, cleanup, warning, err := assembleGIF(paths, gifAssembleOptions{
+		delayMS: 80, numColors: 256, sizeCeiling: int64(len(fullData) - 1),
+	})
+	if err != nil {
+		t.Fatalf("assembleGIF(reduced): %v", err)
+	}
+	defer cleanup()
+
+	redData, _ := os.ReadFile(reduced)
+	if len(redData) >= len(fullData) {
+		t.Errorf("re-encoded gif = %d bytes, want smaller than full %d", len(redData), len(fullData))
+	}
+	if warning == "" {
+		t.Error("expected a warning when the size ceiling triggers a re-encode")
 	}
 }

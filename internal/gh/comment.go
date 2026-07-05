@@ -74,12 +74,6 @@ func isImage(name string) bool {
 	return ok
 }
 
-// IsImage reports whether name carries an extension that FormatSection
-// renders as an inline image embed rather than a click-through link.
-// Callers outside this package use it to keep an upload inline — e.g. a
-// GIF whose name lacks such an extension would render only as a link.
-func IsImage(name string) bool { return isImage(name) }
-
 // FormatSection builds the markdown section for an attachment
 // upload, without the marker or heading. Used for both default
 // stdout output from the CLI and the appended section in an

@@ -56,12 +56,6 @@ func TestAssembleGIF_BothGuards(t *testing.T) {
 }
 
 func TestAssembleGIF_ReencodeFailureFallback(t *testing.T) {
-	orig := reencodeGIF
-	reencodeGIF = func([]image.Image, gifenc.Options) ([]byte, error) {
-		return nil, fmt.Errorf("boom")
-	}
-	defer func() { reencodeGIF = orig }()
-
 	dir := t.TempDir()
 	var paths []string
 	for i := 0; i < 4; i++ {
@@ -69,6 +63,9 @@ func TestAssembleGIF_ReencodeFailureFallback(t *testing.T) {
 	}
 	gifPath, cleanup, warning, err := assembleGIF(paths, gifAssembleOptions{
 		delayMS: 80, numColors: 256, sizeCeiling: 1,
+		reencode: func([]image.Image, gifenc.Options) ([]byte, error) {
+			return nil, fmt.Errorf("boom")
+		},
 	})
 	if err != nil {
 		t.Fatalf("assembleGIF should not error when only the re-encode fails: %v", err)
@@ -94,24 +91,46 @@ func TestAssembleGIF_NameWithoutImageExt(t *testing.T) {
 	if got := filepath.Base(gifPath); got != "verify.gif" {
 		t.Errorf("output basename = %q, want verify.gif", got)
 	}
-	if !strings.Contains(warning, "appended .gif") {
-		t.Errorf("warning should note the appended extension, got: %q", warning)
+	if !strings.Contains(warning, "not a .gif") {
+		t.Errorf("warning should note the forced .gif extension, got: %q", warning)
 	}
 }
 
-func TestAssembleGIF_NameWithImageExtUnchanged(t *testing.T) {
+func TestAssembleGIF_NameGifExtUnchanged(t *testing.T) {
 	dir := t.TempDir()
 	f0 := writePNG(t, dir, "a.png", 4, 4, color.White)
-	gifPath, cleanup, warning, err := assembleGIF([]string{f0}, gifAssembleOptions{name: "shot.png", delayMS: 80})
+	// An uppercase .GIF is still a GIF extension — matched case-insensitively,
+	// so it is left as-is rather than doubled to "shot.GIF.gif".
+	for _, name := range []string{"shot.gif", "shot.GIF"} {
+		gifPath, cleanup, warning, err := assembleGIF([]string{f0}, gifAssembleOptions{name: name, delayMS: 80})
+		if err != nil {
+			t.Fatalf("assembleGIF(%q): %v", name, err)
+		}
+		if got := filepath.Base(gifPath); got != name {
+			t.Errorf("output basename = %q, want %q (unchanged)", got, name)
+		}
+		if warning != "" {
+			t.Errorf("name %q already a .gif, warning should be empty, got: %q", name, warning)
+		}
+		cleanup()
+	}
+}
+
+func TestAssembleGIF_NameNonGifExtNormalized(t *testing.T) {
+	dir := t.TempDir()
+	f0 := writePNG(t, dir, "a.png", 4, 4, color.White)
+	// The payload is a GIF, so a non-.gif image extension is normalized to
+	// .gif (not left as-is) — GitHub keys the content-type off the extension.
+	gifPath, cleanup, warning, err := assembleGIF([]string{f0}, gifAssembleOptions{name: "chart.png", delayMS: 80})
 	if err != nil {
 		t.Fatalf("assembleGIF: %v", err)
 	}
 	defer cleanup()
-	if got := filepath.Base(gifPath); got != "shot.png" {
-		t.Errorf("output basename = %q, want shot.png (unchanged)", got)
+	if got := filepath.Base(gifPath); got != "chart.gif" {
+		t.Errorf("output basename = %q, want chart.gif (normalized)", got)
 	}
-	if warning != "" {
-		t.Errorf("no guard fired, warning should be empty, got: %q", warning)
+	if !strings.Contains(warning, "not a .gif") {
+		t.Errorf("warning should note the forced .gif extension, got: %q", warning)
 	}
 }
 

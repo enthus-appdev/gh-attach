@@ -111,7 +111,10 @@ func TestEncode_DelayUpperClamp(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Encode: %v", err)
 	}
-	g, _ := gif.DecodeAll(bytes.NewReader(data))
+	g, err := gif.DecodeAll(bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("DecodeAll: %v", err)
+	}
 	if g.Delay[0] != 65535 {
 		t.Errorf("Delay = %d, want 65535 (clamped, not wrapped)", g.Delay[0])
 	}

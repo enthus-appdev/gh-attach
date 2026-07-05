@@ -15,7 +15,6 @@ import (
 	"github.com/enthus-appdev/gh-attach/internal/gifenc"
 )
 
-// decodeGIFFrameCount reads a GIF file and returns how many frames it holds.
 func decodeGIFFrameCount(t *testing.T, path string) int {
 	t.Helper()
 	f, err := os.Open(path)
@@ -30,9 +29,6 @@ func decodeGIFFrameCount(t *testing.T, path string) int {
 	return len(g.Image)
 }
 
-// TestAssembleGIF_BothGuards drives the frame-cap and size-ceiling guards
-// through a single call and asserts both messages surface in the joined
-// warning — the two guards must not clobber each other.
 func TestAssembleGIF_BothGuards(t *testing.T) {
 	dir := t.TempDir()
 	var paths []string
@@ -59,9 +55,6 @@ func TestAssembleGIF_BothGuards(t *testing.T) {
 	}
 }
 
-// TestAssembleGIF_ReencodeFailureFallback forces the size-ceiling reduction
-// encode to fail and asserts assembleGIF keeps the valid oversized first
-// encode (with a warning) rather than erroring out.
 func TestAssembleGIF_ReencodeFailureFallback(t *testing.T) {
 	orig := reencodeGIF
 	reencodeGIF = func([]image.Image, gifenc.Options) ([]byte, error) {
@@ -90,8 +83,6 @@ func TestAssembleGIF_ReencodeFailureFallback(t *testing.T) {
 	}
 }
 
-// TestAssembleGIF_NameWithoutImageExt asserts a --name lacking an inline-image
-// extension gets .gif appended (so it renders inline) with a warning.
 func TestAssembleGIF_NameWithoutImageExt(t *testing.T) {
 	dir := t.TempDir()
 	f0 := writePNG(t, dir, "a.png", 4, 4, color.White)
@@ -108,8 +99,6 @@ func TestAssembleGIF_NameWithoutImageExt(t *testing.T) {
 	}
 }
 
-// TestAssembleGIF_NameWithImageExtUnchanged asserts a --name that already has
-// an inline-image extension is left alone and raises no name warning.
 func TestAssembleGIF_NameWithImageExtUnchanged(t *testing.T) {
 	dir := t.TempDir()
 	f0 := writePNG(t, dir, "a.png", 4, 4, color.White)
@@ -126,9 +115,6 @@ func TestAssembleGIF_NameWithImageExtUnchanged(t *testing.T) {
 	}
 }
 
-// TestRun_GifMode_JSONSurfacesWarning covers item 1 and the --json suppression
-// branch: a guard fires, and because stderr is suppressed in JSON mode the
-// warning must appear in the JSON `warning` field instead.
 func TestRun_GifMode_JSONSurfacesWarning(t *testing.T) {
 	dir := t.TempDir()
 	var frames []string
@@ -155,8 +141,6 @@ func TestRun_GifMode_JSONSurfacesWarning(t *testing.T) {
 	}
 }
 
-// TestRun_GifMode_StderrWarningNonJSON covers the non-JSON surfacing branch:
-// the same guard writes to stderr, and stdout is markdown (not JSON).
 func TestRun_GifMode_StderrWarningNonJSON(t *testing.T) {
 	dir := t.TempDir()
 	var frames []string

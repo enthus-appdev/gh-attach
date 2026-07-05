@@ -103,6 +103,9 @@ type uploadOptions struct {
 	key          string
 	name         string
 	asJSON       bool
+	gif          bool // --gif: assemble filePaths into one animated GIF before upload
+	delayMS      int  // --delay: per-frame delay (ms) in gif mode
+	numColors    int  // --colors: per-frame palette size in gif mode
 }
 
 // defaultDeps returns the real production dependencies — the thin
@@ -165,7 +168,10 @@ func runWithDeps(args []string, stdout, stderr io.Writer, deps runDeps) int {
 	repoOverride := fs.String("repo", "", "Target repo as OWNER/NAME or a GitHub URL (default: origin of the current clone)")
 	key := fs.String("key", "", "Upload to an ad-hoc key under refs/uploads/misc/KEY instead of a PR/issue (mutually exclusive with NUMBER and --comment)")
 	asJSON := fs.Bool("json", false, "Emit a JSON result object instead of the markdown table (suppresses stderr progress + URL list)")
-	name := fs.String("name", "", "Basename to use when reading file bytes from stdin (`-`). Required with stdin, rejected otherwise.")
+	name := fs.String("name", "", "Basename to use when reading file bytes from stdin (`-`) or naming a --gif output. Required with stdin, rejected otherwise (except with --gif).")
+	gifMode := fs.Bool("gif", false, "Assemble the input image frames into one animated GIF and upload that instead of the individual frames")
+	delayMS := fs.Int("delay", 80, "Per-frame delay in milliseconds for --gif (GIF granularity is 10ms; minimum 20)")
+	colors := fs.Int("colors", 256, "Palette colors per frame for --gif (2–256)")
 
 	fs.Usage = func() {
 		_, _ = fmt.Fprintf(stderr, "Upload images to a GitHub PR or issue and print embeddable markdown to stdout.\n\n")
@@ -206,7 +212,7 @@ func runWithDeps(args []string, stdout, stderr io.Writer, deps runDeps) int {
 
 	number, filePaths := parseArgs(remaining)
 	if len(filePaths) == 0 {
-		_, _ = fmt.Fprintln(stderr,"error: no image files specified")
+		_, _ = fmt.Fprintln(stderr, "error: no image files specified")
 		return 1
 	}
 
@@ -219,6 +225,9 @@ func runWithDeps(args []string, stdout, stderr io.Writer, deps runDeps) int {
 		key:          *key,
 		name:         *name,
 		asJSON:       *asJSON,
+		gif:          *gifMode,
+		delayMS:      *delayMS,
+		numColors:    *colors,
 	}
 	if err := runUpload(opts, stdout, stderr, deps); err != nil {
 		_, _ = fmt.Fprintf(stderr, "error: %v\n", err)
@@ -266,14 +275,34 @@ func runUpload(opts uploadOptions, stdout, stderr io.Writer, deps runDeps) error
 	// explicitly (rather than letting expandFiles produce an opaque
 	// "no files matched" result).
 	useStdin := len(opts.filePaths) == 1 && opts.filePaths[0] == "-"
+	if opts.gif && useStdin {
+		return fmt.Errorf("--gif reads frame files from disk and cannot read from stdin (`-`)")
+	}
+	// Reject out-of-range gif tunables at the boundary rather than
+	// silently coercing them (the flag help promises these ranges).
+	if opts.gif {
+		if opts.numColors < 2 || opts.numColors > 256 {
+			return fmt.Errorf("--colors must be between 2 and 256 (got %d)", opts.numColors)
+		}
+		if opts.delayMS < 20 {
+			return fmt.Errorf("--delay must be at least 20 ms (got %d)", opts.delayMS)
+		}
+	}
 	if !useStdin {
 		for _, p := range opts.filePaths {
 			if p == "-" {
 				return fmt.Errorf("`-` must be the only file argument when reading from stdin")
 			}
 		}
-		if opts.name != "" {
-			return fmt.Errorf("--name is only valid when reading from stdin (pass `-` as the file argument)")
+		// --name labels the stdin upload's basename or the --gif output
+		// name; it has no meaning for a normal multi-file disk upload.
+		if opts.name != "" && !opts.gif {
+			return fmt.Errorf("--name is only valid when reading from stdin (`-`) or with --gif")
+		}
+		if opts.gif && opts.name != "" {
+			if err := validateName(opts.name); err != nil {
+				return err
+			}
 		}
 	} else {
 		if opts.name == "" {
@@ -326,6 +355,22 @@ func runUpload(opts uploadOptions, stdout, stderr io.Writer, deps runDeps) error
 		if err != nil {
 			return err
 		}
+	}
+
+	// --gif: collapse the frame files into a single animated GIF and
+	// upload that. Downstream (push, render, comment) is unchanged —
+	// a .gif is already an inline-image extension in comment.go.
+	if opts.gif {
+		gifPath, cleanup, gerr := assembleGIF(files, gifAssembleOptions{
+			name:      opts.name,
+			delayMS:   opts.delayMS,
+			numColors: opts.numColors,
+		})
+		if gerr != nil {
+			return fmt.Errorf("assemble gif: %w", gerr)
+		}
+		defer cleanup()
+		files = []string{gifPath}
 	}
 
 	// Build the ref path, commit message, and user-facing target

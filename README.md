@@ -50,11 +50,27 @@ gh attach --json 123 screenshot.png
 # Read file bytes from stdin with --name BASENAME (see "Reading from stdin" below)
 screencapture -i -t png - | gh attach --name shot.png 123 -
 
+# Assemble ordered frames into one inline animated GIF and attach to PR 123
+gh attach --gif 123 frames/frame-*.png
+
+# Name the clip and tune playback (per-frame delay in ms) + palette size
+gh attach --gif --name verify.gif --delay 80 --colors 128 123 frames/frame-*.png
+
 # Download files back to disk (see "gh attach get" below)
 gh attach get 123 --output ./restored
 ```
 
 By default `gh attach` reads the target repo from the current clone's `origin` remote. Pass `--repo OWNER/NAME` (or a full GitHub URL) to target a different repo or to run from outside any git clone. Whenever `--repo` is used, `NUMBER` or `--key` must be passed explicitly — PR auto-detection only works inside a clone of the target repo.
+
+### Animated GIF mode (`--gif`)
+
+`--gif` assembles the supplied image frames (PNG or JPEG) into a single
+animated GIF and uploads *that* — the GIF renders inline and autoplays in
+the PR comment, unlike an `.mp4`, which GitHub can only link. Frames play
+in filename order, so zero-pad them (`frame-000.png`, `frame-001.png`, …).
+All frames must share the same dimensions. `--delay` sets per-frame time in
+milliseconds (default 80 ≈ 12 fps); `--colors` sets the per-frame palette
+size (default 256). No ffmpeg and no external binaries — encoding is pure Go.
 
 ### JSON output
 

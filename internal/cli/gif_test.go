@@ -9,6 +9,7 @@ import (
 	"image/png"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 )
 
@@ -207,6 +208,8 @@ func TestSampleEvenly(t *testing.T) {
 		n    int
 		want []int
 	}{
+		{"nil input passes through", nil, 3, nil},
+		{"empty input passes through", []int{}, 3, []int{}},
 		{"n zero passes through", []int{1, 2, 3}, 0, []int{1, 2, 3}},
 		{"n negative passes through", []int{1, 2, 3}, -1, []int{1, 2, 3}},
 		{"n equal to len passes through", []int{1, 2, 3}, 3, []int{1, 2, 3}},
@@ -218,13 +221,8 @@ func TestSampleEvenly(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := sampleEvenly(tt.in, tt.n)
-			if len(got) != len(tt.want) {
-				t.Fatalf("sampleEvenly(%v, %d) = %v, want %v", tt.in, tt.n, got, tt.want)
-			}
-			for i := range got {
-				if got[i] != tt.want[i] {
-					t.Errorf("sampleEvenly(%v, %d) = %v, want %v", tt.in, tt.n, got, tt.want)
-				}
+			if !slices.Equal(got, tt.want) {
+				t.Errorf("sampleEvenly(%v, %d) = %v, want %v", tt.in, tt.n, got, tt.want)
 			}
 		})
 	}

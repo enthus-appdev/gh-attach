@@ -130,6 +130,25 @@ func TestRun_GifMode_RejectsOutOfRangeDelay(t *testing.T) {
 	}
 }
 
+// TestRun_GifMode_AcceptsMaxDelay locks in the boundary itself (655350
+// is the largest --delay whose rounded centisecond value still fits
+// the GIF format's 16-bit delay field) so the rejection above is
+// proven to be an off-by-one-safe `>`, not an overly strict `>=`.
+func TestRun_GifMode_AcceptsMaxDelay(t *testing.T) {
+	dir := t.TempDir()
+	f0 := writePNG(t, dir, "frame-000.png", 8, 6, color.RGBA{200, 0, 0, 255})
+	deps, cap := gifModeDeps()
+
+	var stdout, stderr bytes.Buffer
+	code := runWithDeps([]string{"--gif", "--delay", "655350", "42", f0}, &stdout, &stderr, deps)
+	if code != 0 {
+		t.Fatalf("exit code = %d, stderr=%s", code, stderr.String())
+	}
+	if len(cap.gotFiles) != 1 || !strings.HasSuffix(cap.gotFiles[0], ".gif") {
+		t.Errorf("PushAttachments got %v, want exactly one .gif", cap.gotFiles)
+	}
+}
+
 // TestRun_GifMode_RejectsOversizedDelay locks in the upper bound: GIF
 // stores each frame's delay as a 16-bit centisecond count, so a
 // --delay whose rounded/10 value would exceed that must be rejected

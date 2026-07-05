@@ -72,6 +72,20 @@ All frames must share the same dimensions. `--delay` sets per-frame time in
 milliseconds (default 80 ≈ 12 fps); `--colors` sets the per-frame palette
 size (default 256). No ffmpeg and no external binaries — encoding is pure Go.
 
+Two guard flags bound runaway captures. `--max-frames` (default 300) caps
+the frame count — if the supplied frames exceed it, they're evenly sampled
+down to `--max-frames` so playback still covers the whole clip rather than
+truncating the tail (`0` disables the cap). `--size-ceiling` (default
+5242880 bytes = 5 MB) bounds the encoded GIF's size — if the first encode
+exceeds it, `gh attach` re-encodes once with fewer colors and half the
+frames (`0` disables the ceiling); if the reduced encode is still over,
+it's uploaded anyway with a warning.
+
+```bash
+# Bound a long capture: cap frames and re-encode if the GIF is too big
+gh attach --gif --max-frames 200 --size-ceiling 3000000 123 frames/frame-*.png
+```
+
 ### JSON output
 
 Pass `--json` to get a structured result object on stdout instead of the markdown table. Stderr is suppressed in JSON mode (no progress line, no `Uploaded:` URL list) so the output is pipe-friendly:

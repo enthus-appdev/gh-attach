@@ -299,6 +299,12 @@ func runUpload(opts uploadOptions, stdout, stderr io.Writer, deps runDeps) error
 		if opts.delayMS > 655350 {
 			return fmt.Errorf("--delay must be at most 655350 ms (got %d)", opts.delayMS)
 		}
+		if opts.maxFrames < 0 {
+			return fmt.Errorf("--max-frames cannot be negative (got %d); use 0 to disable the cap", opts.maxFrames)
+		}
+		if opts.sizeCeiling < 0 {
+			return fmt.Errorf("--size-ceiling cannot be negative (got %d); use 0 to disable the ceiling", opts.sizeCeiling)
+		}
 	}
 	if !useStdin {
 		for _, p := range opts.filePaths {

@@ -62,9 +62,11 @@ func assembleGIF(framePaths []string, opts gifAssembleOptions) (string, func(), 
 	}
 
 	// Size ceiling: one reduced re-encode — fewer colors, half the
-	// frames (delay doubled so playback speed is preserved). The palette
-	// is never raised above what the caller asked for, or the
-	// "reduction" could grow the file for a low --colors value.
+	// frames (delay doubled so playback speed is preserved — except at
+	// extreme per-frame delays, where the doubled value is clamped at
+	// the encoder's uint16 centisecond max instead of preserving speed).
+	// The palette is never raised above what the caller asked for, or
+	// the "reduction" could grow the file for a low --colors value.
 	if opts.sizeCeiling > 0 && int64(len(data)) > opts.sizeCeiling {
 		reducedColors := 64
 		if opts.numColors > 0 && opts.numColors < reducedColors {

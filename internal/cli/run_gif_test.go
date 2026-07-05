@@ -132,6 +132,42 @@ func TestRun_GifMode_RejectsOutOfRangeDelay(t *testing.T) {
 	}
 }
 
+func TestRun_GifMode_RejectsNegativeMaxFrames(t *testing.T) {
+	dir := t.TempDir()
+	f0 := writePNG(t, dir, "frame-000.png", 8, 6, color.RGBA{200, 0, 0, 255})
+	deps, captured := gifModeDeps()
+
+	var stdout, stderr bytes.Buffer
+	code := runWithDeps([]string{"--gif", "--max-frames", "-1", "42", f0}, &stdout, &stderr, deps)
+	if code == 0 {
+		t.Fatalf("expected non-zero exit for negative --max-frames, got 0")
+	}
+	if !strings.Contains(stderr.String(), "--max-frames") {
+		t.Errorf("stderr should explain the --max-frames range violation, got: %s", stderr.String())
+	}
+	if captured.gotFiles != nil {
+		t.Errorf("PushAttachments should not have been called, got: %v", captured.gotFiles)
+	}
+}
+
+func TestRun_GifMode_RejectsNegativeSizeCeiling(t *testing.T) {
+	dir := t.TempDir()
+	f0 := writePNG(t, dir, "frame-000.png", 8, 6, color.RGBA{200, 0, 0, 255})
+	deps, captured := gifModeDeps()
+
+	var stdout, stderr bytes.Buffer
+	code := runWithDeps([]string{"--gif", "--size-ceiling", "-1", "42", f0}, &stdout, &stderr, deps)
+	if code == 0 {
+		t.Fatalf("expected non-zero exit for negative --size-ceiling, got 0")
+	}
+	if !strings.Contains(stderr.String(), "--size-ceiling") {
+		t.Errorf("stderr should explain the --size-ceiling range violation, got: %s", stderr.String())
+	}
+	if captured.gotFiles != nil {
+		t.Errorf("PushAttachments should not have been called, got: %v", captured.gotFiles)
+	}
+}
+
 // gifBytesCapturingGitClient additionally reads the pushed file's
 // bytes at push time. assembleGIF's temp file is removed by its
 // deferred cleanup before runWithDeps returns to the test, so bytes

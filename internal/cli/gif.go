@@ -19,6 +19,10 @@ type gifAssembleOptions struct {
 	numColors   int
 	maxFrames   int   // cap on frames; 0 → no cap. Excess frames are evenly sampled out.
 	sizeCeiling int64 // byte ceiling; 0 → no ceiling. Over → one reduced re-encode.
+	// reencode is the size-ceiling reduction encoder. nil → gifenc.Encode.
+	// A per-call seam (not a package var) so a test can force the reduction
+	// to fail without a shared mutable global that would race under t.Parallel.
+	reencode func([]image.Image, gifenc.Options) ([]byte, error)
 }
 
 // assembleGIF decodes the ordered frame files (PNG or JPEG), applies
@@ -72,16 +76,24 @@ func assembleGIF(framePaths []string, opts gifAssembleOptions) (string, func(), 
 		if opts.numColors > 0 && opts.numColors < reducedColors {
 			reducedColors = opts.numColors
 		}
-		reduced := sampleEvenly(frames, (len(frames)+1)/2)
-		data2, err2 := gifenc.Encode(reduced, gifenc.Options{DelayMS: opts.delayMS * 2, NumColors: reducedColors})
-		if err2 != nil {
-			return "", nil, "", err2
+		reencode := opts.reencode
+		if reencode == nil {
+			reencode = gifenc.Encode
 		}
-		data = data2
-		if int64(len(data)) > opts.sizeCeiling {
-			warnings = append(warnings, fmt.Sprintf("gif is %d bytes, over the %d-byte ceiling even after reduction — uploaded anyway", len(data), opts.sizeCeiling))
+		reduced := sampleEvenly(frames, (len(frames)+1)/2)
+		data2, err2 := reencode(reduced, gifenc.Options{DelayMS: opts.delayMS * 2, NumColors: reducedColors})
+		if err2 != nil {
+			// The first encode already produced a valid (if oversized) GIF;
+			// prefer shipping it over failing outright when only the
+			// reduction step errors. Keep `data` as-is and warn.
+			warnings = append(warnings, fmt.Sprintf("gif is %d bytes, over the %d-byte ceiling, and the reduction re-encode failed (%v) — uploaded the original anyway", len(data), opts.sizeCeiling, err2))
 		} else {
-			warnings = append(warnings, fmt.Sprintf("gif exceeded the %d-byte ceiling — reduced to %d colors / %d frames", opts.sizeCeiling, reducedColors, len(reduced)))
+			data = data2
+			if int64(len(data)) > opts.sizeCeiling {
+				warnings = append(warnings, fmt.Sprintf("gif is %d bytes, over the %d-byte ceiling even after reduction — uploaded anyway", len(data), opts.sizeCeiling))
+			} else {
+				warnings = append(warnings, fmt.Sprintf("gif exceeded the %d-byte ceiling — reduced to %d colors / %d frames", opts.sizeCeiling, reducedColors, len(reduced)))
+			}
 		}
 	}
 
@@ -99,6 +111,18 @@ func assembleGIF(framePaths []string, opts gifAssembleOptions) (string, func(), 
 		if base != "." && base != ".." && base != "/" && base != string(filepath.Separator) {
 			name = base
 		}
+	}
+	// The payload is always a GIF, and GitHub derives an attachment's
+	// content-type from its name extension: any non-.gif name (even another
+	// image type like .png) can render as a static still instead of the
+	// inline autoplay --gif exists to produce. Append .gif (rather than
+	// replacing the last dot-segment) so a dotted base name like
+	// "release-1.0" keeps its ".0" instead of being mangled to "release-1.gif".
+	// Case-insensitive so an existing .GIF isn't doubled.
+	if !strings.EqualFold(filepath.Ext(name), ".gif") {
+		fixed := name + ".gif"
+		warnings = append(warnings, fmt.Sprintf("--name %q is not a .gif; using %q so the clip animates inline", name, fixed))
+		name = fixed
 	}
 	tmpDir, err := os.MkdirTemp("", "gh-attach-gif-*")
 	if err != nil {

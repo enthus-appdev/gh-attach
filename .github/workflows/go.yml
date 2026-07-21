@@ -151,7 +151,7 @@ jobs:
       actions: read        # download the code-coverage artifact from the test job
       pull-requests: write # post the per-PR coverage diff comment
     steps:
-      - uses: fgrosse/go-coverage-report@v1.3.0
+      - uses: fgrosse/go-coverage-report@v1.3.1
         with:
           coverage-artifact-name: code-coverage
           coverage-file-name: cover.out

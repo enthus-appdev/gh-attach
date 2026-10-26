@@ -121,7 +121,7 @@ jobs:
 
       - name: Check test coverage
         id: coverage
-        uses: vladopajic/go-test-coverage/action/source@v2
+        uses: vladopajic/go-test-coverage/action/source@v2201
         with:
           profile: cover.out
           # Badge push: main runs only. On PRs the token is empty so the
